@@ -244,8 +244,11 @@
         tdDate.textContent = r[0];
         const tdItem = document.createElement('td');
         tdItem.className = 'item-cell';
-        tdItem.textContent = r[5];
+        const clamp = document.createElement('div');
+        clamp.className = 'item-clamp';
+        clamp.textContent = r[5];
         tdItem.title = r[5];
+        tdItem.appendChild(clamp);
         const tdAmount = document.createElement('td');
         tdAmount.className = 'col-amount';
         tdAmount.textContent = Number(r[6]).toLocaleString('ja-JP');
