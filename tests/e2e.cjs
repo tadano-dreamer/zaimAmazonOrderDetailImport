@@ -278,7 +278,51 @@ async function main() {
     await browser.close();
   }
 
-  // 3) 最小幅 320px(小さい iPhone SE 相当)でレイアウト崩れがないこと
+  // 3) 分割エクスポート対応: Order History.csv が複数に分割された ZIP を統合して読めること
+  //    (重複コピーの Refund Details.csv は二重計上されないこと)
+  {
+    const JSZip = require(path.join(REPO, 'web', 'vendor', 'jszip.min.js'));
+    const orderText = fs.readFileSync(
+      path.join(REPO, 'testdata', 'dummy', 'Your Orders', 'Your Amazon Orders', 'Order History.csv'),
+      'utf8'
+    );
+    const refundText = fs.readFileSync(
+      path.join(REPO, 'testdata', 'dummy', 'Your Orders', 'Your Returns & Refunds', 'Refund Details.csv'),
+      'utf8'
+    );
+    // ヘッダ + 前半 / ヘッダ + 後半 の2ファイルに分割
+    const lines = orderText.split('\r\n').filter(Boolean);
+    const header = lines[0];
+    const half = Math.ceil((lines.length - 1) / 2);
+    const part1 = [header, ...lines.slice(1, 1 + half)].join('\r\n') + '\r\n';
+    const part2 = [header, ...lines.slice(1 + half)].join('\r\n') + '\r\n';
+    const zip = new JSZip();
+    zip.file('Your Orders/Retail.OrderHistory.1/Order History.csv', part1);
+    zip.file('Your Orders/Retail.OrderHistory.2/Order History.csv', part2);
+    zip.file('Your Orders/Your Returns & Refunds/Refund Details.csv', refundText);
+    zip.file('Your Orders/backup/Refund Details.csv', refundText); // 完全同一の重複コピー
+    const splitZip = path.join(SHOT_DIR, 'split-orders.zip');
+    fs.writeFileSync(splitZip, await zip.generateAsync({ type: 'nodebuffer' }));
+
+    const browser = await webkit.launch();
+    const page = await (await browser.newContext({ ...devices['iPhone 14'] })).newPage();
+    console.log('\n=== 分割CSV統合(複数 Order History.csv) ===');
+    await page.goto(`http://127.0.0.1:${PORT}/`);
+    await page.setInputFiles('#zip-input', splitZip);
+    await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
+    const status = await page.textContent('#load-status');
+    check(status.includes('統合'), `統合の注記が表示される: "${status}"`);
+    await page.selectOption('#card-select', '5171');
+    await page.waitForFunction(() => document.getElementById('sum-count').textContent === '5件');
+    check((await page.textContent('#sum-count')) === '5件', '分割ZIP: 件数 5件(全パーツ読込)');
+    check(
+      (await page.textContent('#sum-total')) === '15,048円',
+      '分割ZIP: 合計 15,048円(重複返金の二重差引なし)'
+    );
+    await browser.close();
+  }
+
+  // 4) 最小幅 320px(小さい iPhone SE 相当)でレイアウト崩れがないこと
   {
     const browser = await webkit.launch();
     const ctx = await browser.newContext({

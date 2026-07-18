@@ -105,39 +105,52 @@
       return;
     }
 
-    // フォルダ構成の揺れに備えてパス末尾で検索(大量のPDFは触らない)
-    const findEntry = (suffix) => {
-      let hit = null;
+    // フォルダ構成の揺れに備えてパス末尾で検索(大量のPDFは触らない)。
+    // 分割エクスポート等で同名CSVが複数あり得るため、全件を返す。
+    const findEntries = (suffix) => {
+      const hits = [];
       zip.forEach((path, entry) => {
-        if (!entry.dir && path.endsWith(suffix) && (hit === null || path.length < hit.path.length)) {
-          hit = { path, entry };
-        }
+        if (!entry.dir && path.endsWith(suffix)) hits.push({ path, entry });
       });
-      return hit;
+      hits.sort((a, b) => a.path.length - b.path.length || (a.path < b.path ? -1 : 1));
+      return hits;
     };
 
-    const orderEntry = findEntry('Order History.csv');
-    if (!orderEntry) {
+    // 複数ファイルは統合して読む。完全同一内容の重複コピーだけはスキップ(二重計上防止)。
+    const readAllRows = async (entries) => {
+      const seenTexts = new Set();
+      const rows = [];
+      for (const { entry } of entries) {
+        const text = await entry.async('string');
+        if (seenTexts.has(text)) continue;
+        seenTexts.add(text);
+        rows.push(...Core.parseCsv(text));
+      }
+      return rows;
+    };
+
+    const orderEntries = findEntries('Order History.csv');
+    if (orderEntries.length === 0) {
       showError(
         'ZIP内に「Order History.csv」が見つかりませんでした。注文履歴(Your Orders)を含むZIPか確認してください。'
       );
       return;
     }
-    const refundEntry = findEntry('Refund Details.csv'); // 無くても動く
+    const refundEntries = findEntries('Refund Details.csv'); // 無くても動く
 
     try {
       setStatus('注文履歴を解析中…');
-      const orderText = await orderEntry.entry.async('string');
-      state.orderRows = Core.parseCsv(orderText);
-      if (refundEntry) {
-        const refundText = await refundEntry.entry.async('string');
-        state.refundRows = Core.parseCsv(refundText);
-      }
+      state.orderRows = await readAllRows(orderEntries);
+      state.refundRows = await readAllRows(refundEntries);
     } catch (e) {
       console.error('CSV 解析失敗:', e);
       showError('CSVの解析に失敗しました。ZIPが壊れていないか確認してください。');
       return;
     }
+    const multiNote =
+      orderEntries.length > 1 || refundEntries.length > 1
+        ? ` ※同名CSVを統合(注文履歴 ${orderEntries.length} / 返金 ${refundEntries.length} ファイル)`
+        : '';
 
     const cards = Core.detectCards(state.orderRows);
     if (cards.length === 0) {
@@ -157,7 +170,7 @@
     );
 
     setStatus(
-      `読み込み完了: 明細 ${state.orderRows.length} 件 / 返金 ${state.refundRows.length} 件 / カード ${cards.length} 種`
+      `読み込み完了: 明細 ${state.orderRows.length} 件 / 返金 ${state.refundRows.length} 件 / カード ${cards.length} 種${multiNote}`
     );
     el.settings.hidden = false;
     el.result.hidden = false;
@@ -180,20 +193,13 @@
     };
   }
 
-  function render() {
-    if (!state.orderRows) return;
-    const opt = currentOptions();
-    const { rows, notes, warnings } = Core.convert(state.orderRows, state.refundRows, opt);
-    const summary = Core.summarize(rows);
-
-    state.csvText = Core.generateCsv(rows);
-    state.fileName = `zaim_import_${opt.card}.csv`;
-
+  function renderSummary(summary) {
     el.sumCount.textContent = `${summary.count}件`;
     el.sumTotal.textContent = formatYen(summary.total);
     el.sumRange.textContent = summary.count ? `${summary.minDate} 〜 ${summary.maxDate}` : '–';
+  }
 
-    // ギフト券併用の警告
+  function renderGiftWarnings(warnings) {
     if (warnings.length > 0) {
       el.giftWarnings.replaceChildren();
       const head = document.createElement('strong');
@@ -216,8 +222,9 @@
     } else {
       el.giftWarnings.hidden = true;
     }
+  }
 
-    // 処理メモ(返金反映・除外)
+  function renderNotes(notes) {
     if (notes.length > 0) {
       el.notesSummary.textContent = `処理メモ(${notes.length}件)`;
       el.notesList.replaceChildren(
@@ -231,8 +238,10 @@
     } else {
       el.notesBox.hidden = true;
     }
+  }
 
-    // プレビュー表(商品名はtextContentで挿入・XSS安全)
+  // プレビュー表(商品名はtextContentで挿入・XSS安全)
+  function renderTable(rows, warnings) {
     const giftDates = new Set(warnings.map((w) => `${w.date}\t${w.amount}\t${w.names}`));
     el.previewBody.replaceChildren(
       ...rows.map((r) => {
@@ -255,6 +264,20 @@
         return tr;
       })
     );
+  }
+
+  function render() {
+    if (!state.orderRows) return;
+    const opt = currentOptions();
+    const { rows, notes, warnings } = Core.convert(state.orderRows, state.refundRows, opt);
+
+    state.csvText = Core.generateCsv(rows);
+    state.fileName = `zaim_import_${opt.card}.csv`;
+
+    renderSummary(Core.summarize(rows));
+    renderGiftWarnings(warnings);
+    renderNotes(notes);
+    renderTable(rows, warnings);
 
     const empty = rows.length === 0;
     el.emptyResult.hidden = !empty;
@@ -271,15 +294,20 @@
   }
 
   function download() {
-    const url = URL.createObjectURL(csvBlob());
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = state.fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-    setActionStatus(`${state.fileName} を保存しました`);
+    try {
+      const url = URL.createObjectURL(csvBlob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = state.fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setActionStatus(`${state.fileName} を保存しました`);
+    } catch (e) {
+      console.error('ダウンロード失敗:', e);
+      setActionStatus('ダウンロードできませんでした。共有またはコピーをお試しください。');
+    }
   }
 
   async function share() {
