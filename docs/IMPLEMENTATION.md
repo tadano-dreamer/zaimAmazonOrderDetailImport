@@ -1,5 +1,9 @@
 # 実装手順書(セッション引き継ぎ用ハンドオフ)
 
+> ✅ **2026-07-18 実装完了**。本書の Phase 1〜3 は実装・検証済み(残: GitHub Pages 公開と実機 UAT)。
+> 検証コマンドは README「テスト」参照。ダミーデータは `testdata/dummy/`(`scripts/make_dummy_data.js` で再生成、
+> 期待出力は `testdata/dummy/output/zaim_import_5171.csv` = Python 参照実装の出力)。
+
 > **このドキュメントの役割**: 新しいセッション(この会話の記憶なし)が、
 > `PLAN.md` とこの文書だけを読んで、前提知識ゼロから Web アプリを実装しきれるようにする。
 > まず `PLAN.md`(設計・確定事項)→ 本書(実装手順)の順で読むこと。

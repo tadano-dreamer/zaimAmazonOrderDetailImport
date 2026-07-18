@@ -10,3 +10,8 @@ venv/
 # OS / エディタ
 .DS_Store
 Thumbs.db
+
+# E2E テスト(tests/)の生成物
+tests/node_modules/
+tests/screenshots/
+tests/package-lock.json

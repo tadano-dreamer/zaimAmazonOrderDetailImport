@@ -1,0 +1,11 @@
+{
+  "name": "zaim-amazon-import-tests",
+  "private": true,
+  "description": "E2E テスト(Playwright)。npm install 後に npx playwright install chromium webkit を実行してから node e2e.cjs",
+  "scripts": {
+    "e2e": "node e2e.cjs"
+  },
+  "dependencies": {
+    "playwright": "^1.45.0"
+  }
+}

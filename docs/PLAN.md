@@ -1,6 +1,10 @@
 # Amazon → Zaim インポートCSV 生成 Webアプリ 計画書
 
-作成日: 2026-07-18 / ステータス: **確定・引き継ぎ可(実装着手可)** / 参照実装: `scripts/amazon_to_zaim.py`
+作成日: 2026-07-18 / ステータス: **実装完了(Phase 1〜3。GitHub Pages 公開と実機 UAT のみ未)** / 参照実装: `scripts/amazon_to_zaim.py`
+
+> ✅ **2026-07-18 実装完了**: `web/` にアプリ本体。単体テスト34件、実データ等価性(39行・126,896円・
+> ゴールデンとバイト一致)、ダミーデータ等価性、E2E 53項目(WebKit iPhone14 / Chromium / 320px幅)全緑。
+> 残タスク: GitHub Pages 公開(要ユーザー判断)と、公開後の実機 iPhone での UAT。
 
 > 🆕 **新セッションで実装を始める人へ**: 本書(設計)を読んだら、次に
 > **[`IMPLEMENTATION.md`](IMPLEMENTATION.md)**(順序付きの実装手順・データ契約・確定アルゴリズム・
