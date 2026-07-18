@@ -44,7 +44,6 @@
     refundRows: [],
     csvText: '',
     fileName: 'zaim_import.csv',
-    giftRowIndexes: new Set(),
   };
 
   const IS_IOS =

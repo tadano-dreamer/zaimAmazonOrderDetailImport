@@ -159,7 +159,8 @@
         seen.add(last4);
         const e = found.get(last4) || { brand, count: 0 };
         e.count += 1;
-        if (!e.brand) e.brand = brand;
+        // ギフト券併用表記("...Card and Visa - 5171")より素のブランド名を優先
+        if (!e.brand || brand.length < e.brand.length) e.brand = brand;
         found.set(last4, e);
       }
     }
