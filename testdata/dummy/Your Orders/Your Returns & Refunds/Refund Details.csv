@@ -1,0 +1,3 @@
+﻿Creation Date,Currency,Direct Debit Refund Amount,Disbursement Type,Order ID,Payment Status,Quantity,Refund Amount,Refund Date,Reversal Amount State,Reversal Reason,Reversal Status,Website
+2026-06-29T22:00:52.027Z,JPY,0,Refund,503-1000002-0000022,Completed,1,200,2026-07-01T16:02:06.468Z,Final,Item shipped late,Completed,Amazon.co.jp
+2026-06-14T10:30:00.000Z,JPY,0,Refund,503-1000007-0000077,Completed,1,"1,000",2026-06-15T09:00:00.000Z,Final,Customer return,Completed,Amazon.co.jp
