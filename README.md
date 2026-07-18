@@ -5,6 +5,9 @@ Zaim インポート用 CSV(`日付,カテゴリ,カテゴリの内訳,お店,�
 
 **Web アプリ実装済み**(`web/` ― クライアント完結・サーバ不要)。
 スマホ(iPhone 等)のブラウザで ZIP を投入すると、その場で Zaim 取込用 CSV を生成できる。
+
+**公開URL(GitHub Pages)**: https://tadano-dreamer.github.io/zaimAmazonOrderDetailImport/
+(`main` への push で `.github/workflows/deploy-pages.yml` がテスト通過後に自動デプロイ)
 PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 設計・実装手順は `docs/` 参照。
 
