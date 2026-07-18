@@ -1,0 +1,12 @@
+# 実データ・生成物(氏名・住所などのPIIを含むためコミットしない)
+/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
