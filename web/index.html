@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#0e9f5b">
+  <meta name="description" content="Amazonの注文履歴ZIPからZaimインポート用CSVをブラウザ内で生成します。データは端末の外に送信されません。">
+  <title>Amazon → Zaim CSV変換</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Amazon → Zaim <span class="accent">CSV変換</span></h1>
+    <p class="privacy-badge" title="ZIPはブラウザ内だけで処理されます">🔒 端末内で完結・データは送信されません</p>
+  </header>
+
+  <main>
+    <!-- STEP 1: ZIP 選択 -->
+    <section class="card" aria-labelledby="step1-title">
+      <h2 id="step1-title"><span class="step-no">1</span>注文履歴ZIPを選ぶ</h2>
+      <p class="hint">
+        Amazonの「<a href="https://www.amazon.co.jp/hz/privacy-central/data-requests/preview.html" target="_blank" rel="noopener">データをリクエスト</a>」で入手した
+        <strong>Your&nbsp;Orders.zip</strong> をそのまま選択してください(解凍不要)。
+      </p>
+      <label class="file-picker" for="zip-input">
+        <span class="file-picker-icon" aria-hidden="true">📦</span>
+        <span class="file-picker-label" id="file-picker-label">ZIPファイルを選択</span>
+        <input type="file" id="zip-input"
+               accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream">
+      </label>
+      <p class="status" id="load-status" role="status" aria-live="polite"></p>
+      <p class="error" id="load-error" role="alert" hidden></p>
+    </section>
+
+    <!-- STEP 2: 設定 -->
+    <section class="card" id="settings-section" aria-labelledby="step2-title" hidden>
+      <h2 id="step2-title"><span class="step-no">2</span>抽出条件</h2>
+
+      <div class="field">
+        <label for="card-select">支払いカード(自動検出・件数付き)</label>
+        <select id="card-select"></select>
+      </div>
+
+      <fieldset class="field">
+        <legend>計上日</legend>
+        <div class="radio-row" role="radiogroup">
+          <label class="radio-chip"><input type="radio" name="date-source" value="ship" checked><span>発送日<small>推奨</small></span></label>
+          <label class="radio-chip"><input type="radio" name="date-source" value="order"><span>注文日</span></label>
+        </div>
+        <div class="radio-row" role="radiogroup">
+          <label class="radio-chip"><input type="radio" name="tz" value="jst" checked><span>日本時間(JST)<small>推奨</small></span></label>
+          <label class="radio-chip"><input type="radio" name="tz" value="utc"><span>UTC</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="field">
+        <legend>まとめ方</legend>
+        <div class="radio-row" role="radiogroup">
+          <label class="radio-chip"><input type="radio" name="aggregate" value="on" checked><span>出荷単位で合算<small>推奨</small></span></label>
+          <label class="radio-chip"><input type="radio" name="aggregate" value="off"><span>明細ごと</span></label>
+        </div>
+        <p class="hint">返金は該当注文から自動で差し引かれます(合算時)。</p>
+      </fieldset>
+
+      <details class="field">
+        <summary>Zaimに入る固定値を変更する</summary>
+        <div class="fixed-grid">
+          <label>カテゴリ<input type="text" id="opt-category" value="生活費"></label>
+          <label>カテゴリの内訳<input type="text" id="opt-subcategory" value="ゆうすけインポート"></label>
+          <label>お店<input type="text" id="opt-store" value="Amazon"></label>
+          <label>支払い元<input type="text" id="opt-source" value="ゆうEPOS"></label>
+        </div>
+      </details>
+    </section>
+
+    <!-- STEP 3: プレビューとダウンロード -->
+    <section class="card" id="result-section" aria-labelledby="step3-title" hidden>
+      <h2 id="step3-title"><span class="step-no">3</span>プレビューと保存</h2>
+
+      <div class="summary-chips" id="summary-chips">
+        <div class="chip"><span class="chip-label">件数</span><span class="chip-value" id="sum-count">–</span></div>
+        <div class="chip"><span class="chip-label">合計</span><span class="chip-value" id="sum-total">–</span></div>
+        <div class="chip chip-wide"><span class="chip-label">期間</span><span class="chip-value" id="sum-range">–</span></div>
+      </div>
+
+      <div class="notice notice-warn" id="gift-warnings" hidden></div>
+      <details class="notice notice-info" id="notes-box" hidden>
+        <summary id="notes-summary">処理メモ</summary>
+        <ul id="notes-list"></ul>
+      </details>
+      <p class="notice notice-warn" id="empty-result" hidden>条件に一致する明細がありませんでした。カードや期間の設定を確認してください。</p>
+
+      <div class="table-wrap" id="table-wrap">
+        <table id="preview-table">
+          <thead><tr><th class="col-date">日付</th><th>品目</th><th class="col-amount">金額</th></tr></thead>
+          <tbody id="preview-body"></tbody>
+        </table>
+      </div>
+      <p class="hint">カテゴリ・お店・支払い元などの固定列もCSVには含まれます。</p>
+
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="btn-download">⬇️ CSVをダウンロード</button>
+        <button type="button" class="btn" id="btn-share" hidden>📤 共有して保存(iPhone向け)</button>
+        <button type="button" class="btn" id="btn-copy">📋 CSVをコピー</button>
+      </div>
+      <p class="status" id="action-status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>ZIPの解凍からCSV生成まで、すべてこのブラウザ内で実行されます。注文データ・住所・氏名が外部に送信されることはありません。</p>
+  </footer>
+
+  <script src="vendor/jszip.min.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
