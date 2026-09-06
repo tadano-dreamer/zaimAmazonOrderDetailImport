@@ -18,7 +18,8 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 3. **カードを選ぶ(複数選択可・利用期間付きで自動検出)**
    - カードを更新・再発行すると下4桁が変わる。家計簿上は同じ口座なので**旧番号と新番号を両方選ぶ**。
    - 切替を検出すると画面が警告し、ワンタップで後継カードを追加できる。
-4. **出力する期間を選ぶ**(全期間 / 月単位)。Zaim へは月ごとに取り込む想定。
+4. **出力する期間を選ぶ**。プルダウンで「全期間 / 各月」を選ぶと開始日・終了日が自動で入り、
+   日付を直接変えれば **1日単位**で切り出せる(取り込み済みの翌日から、など)。
 5. ギフト券併用の警告が出たら、カード明細の**実請求額を入力して補正**する
    (ギフト券の充当額は注文履歴に含まれないため、そのままだと総額で出る)
 6. プレビューを確認して「CSVをダウンロード」(iPhone は共有シート経由の保存も可)
@@ -28,7 +29,7 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 ### テスト
 
 ```bash
-node --test web/js/core.test.js        # 単体テスト(57件)
+node --test web/js/core.test.js        # 単体テスト(62件)
 node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
 cd tests && npm install && npx playwright install chromium webkit
@@ -86,6 +87,9 @@ python scripts/amazon_to_zaim.py --card 5171,7474
 # 月次で取り込む
 python scripts/amazon_to_zaim.py --card 5171,7474 --month 2026-07
 
+# 日単位で取り込む(取り込み済みの翌日から、など)
+python scripts/amazon_to_zaim.py --card 5171,7474 --from 2026-07-19 --to 2026-07-21
+
 # ZIPから解凍込みで実行(data/ に Your Orders.zip がある前提)
 python scripts/amazon_to_zaim.py --zip "Your Orders.zip"
 
@@ -101,7 +105,7 @@ python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
 - **発送日(既定 JST)で計上**: `Ship Date` を日本時間に変換して日付化
 - **返金を差引**: `Refund Details.csv` の返金額を該当注文から減算
 - **複数カードを合算**: カード更新で下4桁が変わっても取りこぼさない
-- **期間で絞り込み**: 月単位で切り出して Zaim へ取り込む
+- **期間で絞り込み**: 月単位でも1日単位でも切り出して Zaim へ取り込む
 - **ギフト券併用は手動補正**: 実請求額を入力するとその額で出力する
 
 詳細・根拠・検証値は `docs/IMPLEMENTATION.md` を参照。

@@ -679,3 +679,73 @@ test('convert: 1注文が複数グループに割れる場合は Order ID 単独
   );
   assert.deepEqual(r2.unmatchedOverrides, []);
 });
+
+// ------------------------------------------------- 日単位の期間指定(2026-09-06)
+const { dateRange } = require('./core.js');
+
+test('dateRange: 出力行の計上日レンジを返す(空なら空文字)', () => {
+  assert.deepEqual(
+    dateRange([
+      ['2026-06-30', '', '', '', '', 'a', '1'],
+      ['2026-05-01', '', '', '', '', 'b', '1'],
+      ['2026-07-09', '', '', '', '', 'c', '1'],
+    ]),
+    { min: '2026-05-01', max: '2026-07-09' }
+  );
+  assert.deepEqual(dateRange([]), { min: '', max: '' });
+});
+
+test('convert: range は期間フィルタ前の全体レンジを返す', () => {
+  const { range } = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateFrom: '2026-06-01', dateTo: '2026-06-30' })
+  );
+  assert.deepEqual(range, { min: '2026-05-19', max: '2026-07-09' });
+});
+
+test('convert: 日単位で1日だけ切り出せる', () => {
+  const oneDay = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateFrom: '2026-06-30', dateTo: '2026-06-30' })
+  );
+  assert.equal(oneDay.rows.length, 2);
+  assert.ok(oneDay.rows.every((r) => r[0] === '2026-06-30'));
+
+  const empty = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateFrom: '2026-06-29', dateTo: '2026-06-29' })
+  );
+  assert.equal(empty.rows.length, 0);
+});
+
+test('convert: 月をまたぐ任意の日付範囲を切り出せる', () => {
+  const { rows } = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateFrom: '2026-06-30', dateTo: '2026-07-09' })
+  );
+  assert.equal(rows.length, 3); // 1657 / 1611 / 4740
+  assert.equal(
+    rows.reduce((s, r) => s + Number(r[6]), 0),
+    1657 + 1611 + 4740
+  );
+});
+
+test('convert: dateFrom だけ / dateTo だけの片側指定も効く', () => {
+  const from = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateFrom: '2026-07-01' })
+  );
+  assert.deepEqual(from.rows.map((r) => r[0]), ['2026-07-09']);
+
+  const to = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { dateTo: '2026-05-31' })
+  );
+  assert.deepEqual(to.rows.map((r) => r[0]), ['2026-05-19']);
+});

@@ -39,6 +39,9 @@ main {
   margin: 0 auto;
   padding: 0 var(--space) calc(var(--space) * 2);
   display: grid;
+  /* 既定の auto トラックだと、中身(ネイティブの日付入力など)の min-content 幅に
+     引きずられてカラムが膨らみ、狭い端末で横スクロールが出る。minmax(0,1fr) で止める */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space);
 }
 
@@ -66,6 +69,7 @@ main {
 
 /* ---------- カード(セクション) ---------- */
 .card {
+  min-width: 0; /* grid/flex の既定 min-width:auto による横溢れを防ぐ */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -179,6 +183,36 @@ select:focus, input[type="text"]:focus, .btn:focus-visible {
 .card-item small { font-size: 0.75rem; color: var(--text-sub); }
 .card-item:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .card-item:has(input:focus-visible) { outline: 3px solid rgba(14, 159, 91, 0.35); }
+
+/* ---------- 期間指定(プリセット + 日付) ---------- */
+.date-range { display: flex; align-items: flex-end; gap: 8px; margin-top: 8px; }
+.date-field {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-sub);
+}
+.date-range input[type="date"] {
+  width: 100%;
+  min-width: 0; /* Chromium のネイティブ日付入力は既定の下限幅が広い */
+  min-height: var(--tap);
+  font-size: 0.95rem;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+}
+.date-range input[type="date"]:focus { outline: 3px solid rgba(14, 159, 91, 0.35); outline-offset: 1px; }
+.date-sep { padding-bottom: 14px; color: var(--text-sub); }
+
+/* ---------- 詳細設定(既定では畳んでおく) ---------- */
+#advanced-settings > .field:first-of-type { margin-top: 10px; }
+#advanced-settings summary { cursor: pointer; }
 
 /* ---------- ギフト券併用の実請求額入力 ---------- */
 .gift-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }

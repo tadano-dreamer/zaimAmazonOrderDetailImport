@@ -230,6 +230,19 @@
     );
   }
 
+  /** 出力行 → {min, max} の計上日レンジ(空なら両方 '')。日付昇順前提ではなく走査する。 */
+  function dateRange(rows) {
+    let min = '';
+    let max = '';
+    for (const r of rows || []) {
+      const d = String(r[0] || '');
+      if (!d) continue;
+      if (!min || d < min) min = d;
+      if (!max || d > max) max = d;
+    }
+    return { min, max };
+  }
+
   /** 出力行 → [{month:'YYYY-MM', count, total}] を日付昇順で。 */
   function listMonths(rows) {
     const acc = new Map();
@@ -340,6 +353,7 @@
       ]);
       all.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
       const months = listMonths(all);
+      const range = dateRange(all);
       const out = all.filter((r) => inRange(r[0], opt.dateFrom, opt.dateTo));
       return {
         rows: out,
@@ -348,6 +362,7 @@
         unmatchedOverrides: [],
         meta: out.map((r) => ({ key: '', oid: '', date: r[0], amount: Number(r[6]) })),
         months,
+        range,
       };
     }
 
@@ -486,7 +501,9 @@
     }
     built.sort((a, b) => (a.row[0] < b.row[0] ? -1 : a.row[0] > b.row[0] ? 1 : 0));
 
-    const months = listMonths(built.map((b) => b.row));
+    const allRows = built.map((b) => b.row);
+    const months = listMonths(allRows);
+    const range = dateRange(allRows); // 期間フィルタ前の全体レンジ(日付入力の初期値に使う)
     const kept = built.filter((b) => inRange(b.row[0], opt.dateFrom, opt.dateTo));
     // 警告も出力範囲に合わせる。月次で切り出しているのに他月のギフト券注文が
     // 並ぶと、対象外の注文へ実請求額を入力してしまう。
@@ -497,6 +514,7 @@
       warnings: warnings.filter((w) => keptKeys.has(w.key)),
       meta: kept.map((b) => b.meta),
       months,
+      range,
       unmatchedOverrides,
     };
   }
@@ -541,6 +559,7 @@
     detectCards,
     suggestSuccessors,
     listMonths,
+    dateRange,
     convert,
     generateCsv,
     summarize,

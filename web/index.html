@@ -51,38 +51,50 @@
       <div class="field">
         <label for="period-select">出力する期間</label>
         <select id="period-select"></select>
-        <p class="hint">Zaimへは月ごとに取り込む想定です。月を選ぶとその月だけを出力します。</p>
+        <div class="date-range">
+          <label class="date-field">開始日<input type="date" id="period-from"></label>
+          <span class="date-sep" aria-hidden="true">〜</span>
+          <label class="date-field">終了日<input type="date" id="period-to"></label>
+        </div>
+        <p class="hint">
+          上で月を選ぶと日付が自動で入ります。日付を直接変えれば<strong>1日単位</strong>で切り出せます
+          (取り込み済みの翌日から、など)。
+        </p>
       </div>
 
-      <fieldset class="field">
-        <legend>計上日</legend>
-        <div class="radio-row" role="radiogroup">
-          <label class="radio-chip"><input type="radio" name="date-source" value="ship" checked><span>発送日<small>推奨</small></span></label>
-          <label class="radio-chip"><input type="radio" name="date-source" value="order"><span>注文日</span></label>
-        </div>
-        <div class="radio-row" role="radiogroup">
-          <label class="radio-chip"><input type="radio" name="tz" value="jst" checked><span>日本時間(JST)<small>推奨</small></span></label>
-          <label class="radio-chip"><input type="radio" name="tz" value="utc"><span>UTC</span></label>
-        </div>
-      </fieldset>
+      <details class="field" id="advanced-settings">
+        <summary>詳細設定(通常は変更不要)</summary>
 
-      <fieldset class="field">
-        <legend>まとめ方</legend>
-        <div class="radio-row" role="radiogroup">
-          <label class="radio-chip"><input type="radio" name="aggregate" value="on" checked><span>出荷単位で合算<small>推奨</small></span></label>
-          <label class="radio-chip"><input type="radio" name="aggregate" value="off"><span>明細ごと</span></label>
-        </div>
-        <p class="hint">返金は該当注文から自動で差し引かれます(合算時)。</p>
-      </fieldset>
+        <fieldset class="field">
+          <legend>計上日</legend>
+          <div class="radio-row" role="radiogroup">
+            <label class="radio-chip"><input type="radio" name="date-source" value="ship" checked><span>発送日<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="date-source" value="order"><span>注文日</span></label>
+          </div>
+          <div class="radio-row" role="radiogroup">
+            <label class="radio-chip"><input type="radio" name="tz" value="jst" checked><span>日本時間(JST)<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="tz" value="utc"><span>UTC</span></label>
+          </div>
+        </fieldset>
 
-      <details class="field">
-        <summary>Zaimに入る固定値を変更する</summary>
-        <div class="fixed-grid">
-          <label>カテゴリ<input type="text" id="opt-category" value="生活費"></label>
-          <label>カテゴリの内訳<input type="text" id="opt-subcategory" value="ゆうすけインポート"></label>
-          <label>お店<input type="text" id="opt-store" value="Amazon"></label>
-          <label>支払い元<input type="text" id="opt-source" value="ゆうEPOS"></label>
-        </div>
+        <fieldset class="field">
+          <legend>まとめ方</legend>
+          <div class="radio-row" role="radiogroup">
+            <label class="radio-chip"><input type="radio" name="aggregate" value="on" checked><span>出荷単位で合算<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="aggregate" value="off"><span>明細ごと</span></label>
+          </div>
+          <p class="hint">返金は該当注文から自動で差し引かれます(合算時)。</p>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>Zaimに入る固定値</legend>
+          <div class="fixed-grid">
+            <label>カテゴリ<input type="text" id="opt-category" value="生活費"></label>
+            <label>カテゴリの内訳<input type="text" id="opt-subcategory" value="ゆうすけインポート"></label>
+            <label>お店<input type="text" id="opt-store" value="Amazon"></label>
+            <label>支払い元<input type="text" id="opt-source" value="ゆうEPOS"></label>
+          </div>
+        </fieldset>
       </details>
     </section>
 

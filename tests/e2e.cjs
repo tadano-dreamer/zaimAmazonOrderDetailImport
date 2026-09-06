@@ -99,6 +99,13 @@ async function selectCards(page, cards) {
   );
 }
 
+/** 詳細設定(計上日・まとめ方・固定値)は既定で畳まれているので、触る前に開く。 */
+async function openAdvanced(page, open) {
+  await page.evaluate((o) => {
+    document.getElementById('advanced-settings').open = o;
+  }, open);
+}
+
 async function listCards(page) {
   return page.$$eval('#card-list input[type="checkbox"]', (bs) => bs.map((b) => b.value));
 }
@@ -112,7 +119,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
 
   // 横スクロールが発生しないこと(モバイル)
   const overflow = await page.evaluate(
-    () => document.scrollingElement.scrollWidth - window.innerWidth
+    () => document.scrollingElement.scrollWidth - document.documentElement.clientWidth
   );
   check(overflow <= 0, `横オーバーフローなし(${overflow}px)`);
 
@@ -171,6 +178,12 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     );
 
     // --- シナリオ B: オプション切替 ---------------------------------------
+    // 計上日・まとめ方は「詳細設定」に畳まれている(通常は触らない設定のため)
+    check(
+      await page.isHidden('input[name="tz"][value="utc"]'),
+      '計上日・まとめ方は既定で畳まれている'
+    );
+    await openAdvanced(page, true);
     // UTC: 今治(最終行)が 7/9 → 7/8 に変わる
     await page.check('input[name="tz"][value="utc"]');
     const utcRange = await page.textContent('#sum-range');
@@ -194,17 +207,12 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     check(orderRange !== range, `注文日基準で期間が変化 → ${orderRange}`);
     await page.check('input[name="date-source"][value="ship"]');
 
-    // 固定値変更が CSV に反映される(details を開いてから入力)
-    await page.evaluate(() => {
-      document.querySelector('details.field').open = true;
-    });
+    // 固定値変更が CSV に反映される
     await page.fill('#opt-source', 'テスト支払い元');
     const csv2 = await captureCsvViaDownload(page);
     check(csv2.includes('テスト支払い元'), '支払い元の変更がCSVに反映');
     await page.fill('#opt-source', 'ゆうEPOS');
-    await page.evaluate(() => {
-      document.querySelector('details.field').open = false;
-    });
+    await openAdvanced(page, false);
   } else {
     console.log('  [SKIP] 実ZIPなし');
   }
@@ -279,10 +287,143 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     normalize(julyCsv).slice(1).every((l) => l.startsWith('2026-07-')),
     '月指定のCSVはその月の行だけ'
   );
+  // 月を選ぶと日付入力にもその月の範囲が入る
+  check(
+    (await page.inputValue('#period-from')) === '2026-07-01' &&
+      (await page.inputValue('#period-to')) === '2026-07-31',
+    `月選択で日付が連動 → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
+  );
+
+  // --- シナリオ F2: 日単位の切り出し -------------------------------------
+  // 取り込み済みの翌日から、といった使い方ができること
+  await page.fill('#period-from', '2026-07-20');
+  await page.fill('#period-to', '2026-07-22');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '2件');
+  check(
+    (await page.textContent('#sum-total')) === '11,670円',
+    `7/20〜7/22 の3日間 → 2件 / ${await page.textContent('#sum-total')}`
+  );
+  check(
+    (await page.inputValue('#period-select')) === 'custom',
+    '日付を直接変えるとプリセットは「日付で指定」になる'
+  );
+  const dayCsv = await captureCsvViaDownload(page);
+  check(
+    normalize(dayCsv)
+      .slice(1)
+      .every((l) => l >= '2026-07-20' && l < '2026-07-23'),
+    '日付指定のCSVはその範囲の行だけ'
+  );
+
+  // 1日だけ・該当なしの日
+  await page.fill('#period-from', '2026-07-21');
+  await page.fill('#period-to', '2026-07-21');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '0件');
+  check((await page.textContent('#sum-count')) === '0件', '該当のない1日を指定すると0件');
+  check(await page.isVisible('#empty-result'), '0件のとき案内が出る');
+
+  // 開始日 > 終了日 は破綻させず、触った側に寄せる
+  await page.fill('#period-from', '2026-07-25');
+  await page.fill('#period-to', '2026-07-01');
+  check(
+    (await page.inputValue('#period-from')) <= (await page.inputValue('#period-to')),
+    `開始>終了の入力を補正 → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
+  );
+
   await page.selectOption('#period-select', 'all');
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '7件'
   );
+  check(
+    (await page.inputValue('#period-from')) === '2026-05-20' &&
+      (await page.inputValue('#period-to')) === '2026-07-22',
+    `全期間に戻すと日付もデータ全体に戻る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
+  );
+
+  // --- シナリオ F3: 期間がカードのデータ範囲外になったら全期間へ戻す -----------
+  // 7月を選んでから、7月に明細が無いカード(Amex 1002 = 6/21のみ)へ切り替える
+  await page.selectOption('#period-select', '2026-07');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '4件');
+  await selectCards(page, ['1002']);
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '1件');
+  check(
+    (await page.inputValue('#period-select')) === 'all',
+    `データ範囲外になった期間は全期間へ戻る → ${await page.inputValue('#period-select')}`
+  );
+  check(
+    (await page.inputValue('#period-from')) === '2026-06-21' &&
+      (await page.inputValue('#period-to')) === '2026-06-21',
+    `日付もそのカードの範囲に入る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
+  );
+  await selectCards(page, ['5171', '7474']);
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '7件');
+
+  // --- シナリオ F4: 日付欄の片側だけ編集しても、もう一方は確定させない ---------
+  // 日付欄は未指定のときデータ全体の端を「表示上の初期値」として出しているだけ。
+  // それを確定させると、後からカードを足したときにその日より前が無警告で落ちる。
+  await selectCards(page, ['7474']); // 利用期間 2026-07-20〜2026-07-22
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '2件');
+  await page.fill('#period-to', '2026-07-21'); // 終了日だけを編集(開始日は触らない)
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '1件');
+  await selectCards(page, ['5171', '7474']); // 開始が古い 5171 を追加
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
+  check(
+    (await page.textContent('#sum-total')) === '16,818円',
+    `終了日だけ指定 → カード追加で古い明細も出る → 6件 / ${await page.textContent('#sum-total')}`
+  );
+  check(
+    (await page.inputValue('#period-from')) === '2026-05-20',
+    `開始日は追加カードのデータ先頭に追従する → ${await page.inputValue('#period-from')}`
+  );
+  await page.selectOption('#period-select', 'all');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '7件');
+
+  // --- シナリオ F5: 「日付で指定」を選んでも巻き戻らない ----------------------
+  await page.selectOption('#period-select', 'custom');
+  await page.waitForTimeout(100);
+  check(
+    (await page.inputValue('#period-select')) === 'custom',
+    `「日付で指定」の選択が保持される → ${await page.inputValue('#period-select')}`
+  );
+  check(
+    (await page.textContent('#sum-count')) === '7件',
+    '「日付で指定」を選ぶだけでは出力は変わらない'
+  );
+  await page.selectOption('#period-select', 'all');
+  await page.waitForTimeout(100);
+  check((await page.inputValue('#period-select')) === 'all', '全期間へ戻せる');
+
+  // --- シナリオ F6: 日付を打ち直している途中に入力を奪われない -----------------
+  // <input type=date> は年や日のセグメントを1つ消しただけでも value が "" になる。
+  // これを「クリアした」と解釈して再描画すると、打っている途中の欄がデータ先頭日へ
+  // 飛ばされ、表示も件数も勝手に全期間へ戻ってしまう。
+  await page.selectOption('#period-select', '2026-07');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '4件');
+  await page.focus('#period-from');
+  await page.evaluate(() => {
+    const i = document.getElementById('period-from');
+    i.value = ''; // 年セグメントを消した状態を再現
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForTimeout(120);
+  check(
+    (await page.inputValue('#period-from')) === '',
+    `編集中の欄が勝手に書き換わらない → "${await page.inputValue('#period-from')}"`
+  );
+  check(
+    (await page.textContent('#sum-count')) === '4件',
+    `打ち直し途中で全期間へ戻らない → ${await page.textContent('#sum-count')}`
+  );
+  // 打ち直しを完了すれば正しく反映される
+  await page.evaluate(() => {
+    const i = document.getElementById('period-from');
+    i.value = '2026-07-19';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '2件');
+  check((await page.textContent('#sum-count')) === '2件', '打ち直し完了で 7/19〜7/31 の2件になる');
+  await page.selectOption('#period-select', 'all');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '7件');
 
   // --- シナリオ G: ギフト券併用の実請求額を手動補正 -------------------------
   // ギフト券の充当額は注文履歴に載らず、総額のままだと Zaim とズレる(実データ 5,760 vs 4,091)。
@@ -350,7 +491,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
 
   // 横オーバーフロー再確認(結果表示後)
   const overflow2 = await page.evaluate(
-    () => document.scrollingElement.scrollWidth - window.innerWidth
+    () => document.scrollingElement.scrollWidth - document.documentElement.clientWidth
   );
   check(overflow2 <= 0, `結果表示後も横オーバーフローなし(${overflow2}px)`);
 
@@ -441,25 +582,40 @@ async function main() {
     await browser.close();
   }
 
-  // 4) 最小幅 320px(小さい iPhone SE 相当)でレイアウト崩れがないこと
-  {
-    const browser = await webkit.launch();
+  // 4) 最小幅 320px(小さい iPhone SE 相当)でレイアウト崩れがないこと。
+  //    ネイティブ日付入力の最小幅はエンジンで違い、Chromium だけ溢れたことがあるため両方で見る。
+  console.log('\n=== 320px 幅(最小)レイアウト ===');
+  for (const [engineName, engine] of [
+    ['WebKit', webkit],
+    ['Chromium', chromium],
+  ]) {
+    const browser = await engine.launch();
     const ctx = await browser.newContext({
       viewport: { width: 320, height: 568 },
       isMobile: true,
       hasTouch: true,
     });
     const page = await ctx.newPage();
-    console.log('\n=== 320px 幅(最小)レイアウト ===');
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.setInputFiles('#zip-input', DUMMY_ZIP);
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
     await selectCards(page, ['5171']);
     const overflow = await page.evaluate(
-      () => document.scrollingElement.scrollWidth - window.innerWidth
+      // innerWidth はモバイルエミュレーション時に実幅より大きくなり溢れを隠すので、
+      // clientWidth(スクロールバーを除いた実表示幅)と比べる
+      () => document.scrollingElement.scrollWidth - document.documentElement.clientWidth
     );
-    check(overflow <= 0, `320px幅で横オーバーフローなし(${overflow}px)`);
-    await page.screenshot({ path: path.join(SHOT_DIR, `se-320-dummy.png`), fullPage: true });
+    check(overflow <= 0, `${engineName} 320px幅で横オーバーフローなし(${overflow}px)`);
+    // 期間の日付欄が2つ並んでもカードからはみ出さない
+    const fits = await page.evaluate(() => {
+      const card = document.getElementById('settings-section').getBoundingClientRect();
+      const dr = document.querySelector('.date-range').getBoundingClientRect();
+      return dr.left >= card.left - 0.5 && dr.right <= card.right + 0.5;
+    });
+    check(fits, `${engineName} 320px幅で日付欄がカード内に収まる`);
+    if (engineName === 'WebKit') {
+      await page.screenshot({ path: path.join(SHOT_DIR, `se-320-dummy.png`), fullPage: true });
+    }
     await browser.close();
   }
 

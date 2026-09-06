@@ -20,6 +20,8 @@
     cardList: $('card-list'),
     cardSwitchNote: $('card-switch-note'),
     periodSelect: $('period-select'),
+    periodFrom: $('period-from'),
+    periodTo: $('period-to'),
     periodScope: $('period-scope'),
     category: $('opt-category'),
     subcategory: $('opt-subcategory'),
@@ -49,9 +51,20 @@
     fileName: 'zaim_import.csv',
     cards: [], // detectCards の結果
     selectedCards: [], // 選択中のカード下4桁(複数可)
-    period: 'all', // 'all' | 'YYYY-MM'
+    dateFrom: '', // 出力する計上日の下限('' = 制限なし)
+    dateTo: '', //   同上限。プルダウンはこの2値を埋めるショートカット
+    customPeriod: false, // 「日付で指定」を選んだ / 日付を直接編集した
+    months: [], // 期間フィルタ前の月サマリ(プリセット生成用)
+    fullRange: { min: '', max: '' }, // 期間フィルタ前の全体レンジ
     overrides: {}, // 上書きキー(通常は Order ID) → 実請求額(ギフト券併用等の手動補正)
   };
+
+  /**
+   * 日付欄の編集に起因する再描画かどうか({source, isCommit} か null)。
+   * 「いま打っている欄を書き換えない」「打った日付を勝手に全期間へ戻さない」の
+   * 2つを、フォーカス状態に頼らず確実に判定するために持つ。
+   */
+  let dateEdit = null;
 
   const IS_IOS =
     /iP(hone|ad|od)/.test(navigator.userAgent) ||
@@ -169,7 +182,9 @@
 
     state.cards = cards;
     state.selectedCards = [cards[0].card]; // 既定は最多利用カード
-    state.period = 'all';
+    state.dateFrom = '';
+    state.dateTo = '';
+    state.customPeriod = false;
     state.overrides = {};
     renderCardList();
 
@@ -254,37 +269,79 @@
   }
 
   // ------------------------------------------------------------- 期間フィルタ
+  //
+  // 真実の源は「開始日・終了日」の2つの日付。プルダウンは月をまとめて入れるための
+  // ショートカットに過ぎない。こうすることで月次でも1日単位でも同じ仕組みで切り出せる。
 
-  /** 'YYYY-MM' → その月の月初・月末('all' なら無制限)。 */
-  function periodRange(period) {
-    if (!period || period === 'all') return { dateFrom: '', dateTo: '' };
-    const [y, m] = period.split('-').map(Number);
+  /** 'YYYY-MM' → その月の月初・月末。 */
+  function monthRange(month) {
+    const [y, m] = month.split('-').map(Number);
     const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    return { dateFrom: `${period}-01`, dateTo: `${period}-${String(lastDay).padStart(2, '0')}` };
+    return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, '0')}` };
+  }
+
+  /** 全期間(=データ全体を覆う指定)かどうか。 */
+  function isFullRange() {
+    const { min, max } = state.fullRange;
+    if (!min || !max) return !state.dateFrom && !state.dateTo;
+    return (
+      (!state.dateFrom || state.dateFrom <= min) && (!state.dateTo || state.dateTo >= max)
+    );
   }
 
   /**
-   * 月プルダウンを(選択肢が変わったときだけ)組み直す。
+   * 選択中の期間が、そのカードのデータと 1日も重ならないか。
+   * カードを切り替えたときに起こる。0件のまま日付ピッカーもデータ範囲外を指す
+   * 状態が残ると「このカードには何も無い」と誤読しかねないので、全期間へ戻す。
+   */
+  function isOutsideData(range) {
+    if (!range.min || !range.max) return false;
+    if (!state.dateFrom && !state.dateTo) return false;
+    const from = state.dateFrom || range.min;
+    const to = state.dateTo || range.max;
+    return from > range.max || to < range.min;
+  }
+
+  /** 現在の日付指定に一致するプリセット値('all' / 'YYYY-MM' / 'custom')。 */
+  function currentPreset() {
+    // 「日付で指定」を選んだ状態は、たまたま全期間と同じ範囲でも維持する
+    // (選んだ直後に 'all' へ巻き戻ると、選択操作が何も起きないように見える)
+    if (state.customPeriod) return 'custom';
+    if (isFullRange()) return 'all';
+    for (const m of state.months) {
+      const r = monthRange(m.month);
+      if (state.dateFrom === r.from && state.dateTo === r.to) return m.month;
+    }
+    return 'custom';
+  }
+
+  /**
+   * 期間プルダウンと日付入力を、現在の state に合わせて描画する。
    *
    * 組み直しをスキップした場合でも、表示値と state は必ず最後に同期させる。
    * ここを早期 return の内側に置くと、同じ ZIP を選び直したときに
    * 「プルダウンは7月なのに出力は全期間」という状態になり、
    * 取込済みの月まで再出力して Zaim 側で重複計上する。
    */
-  function renderPeriodOptions(months) {
+  function renderPeriodControls(months, range) {
+    state.months = months;
+    state.fullRange = range;
+
     const signature = months.map((m) => `${m.month}:${m.count}:${m.total}`).join('|');
     if (el.periodSelect.dataset.signature !== signature) {
       el.periodSelect.dataset.signature = signature;
       const total = months.reduce((s, m) => s + m.count, 0);
-      const opts = [{ value: 'all', text: `全期間(${total}件)` }].concat(
-        months
+      const opts = [
+        { value: 'all', text: `全期間(${total}件)` },
+        ...months
           .slice()
           .reverse() // 新しい月を上に
           .map((m) => ({
             value: m.month,
             text: `${m.month.replace('-', '年')}月(${m.count}件 / ${Number(m.total).toLocaleString('ja-JP')}円)`,
-          }))
-      );
+          })),
+        { value: 'custom', text: '日付で指定' },
+      ];
       el.periodSelect.replaceChildren(
         ...opts.map((o) => {
           const option = document.createElement('option');
@@ -294,22 +351,121 @@
         })
       );
     }
-    // 選択中の月が選択肢に無ければ全期間へ戻し、表示と state を常に一致させる
-    const values = Array.from(el.periodSelect.options, (o) => o.value);
-    if (!values.includes(state.period)) state.period = 'all';
-    el.periodSelect.value = state.period;
+
+    // 空なら属性ごと外す。前のカードのレンジが残ると日付ピッカーが嘘をつく
+    for (const input of [el.periodFrom, el.periodTo]) {
+      input.min = range.min || '';
+      input.max = range.max || '';
+    }
+    syncPeriodDisplay();
+  }
+
+  /**
+   * 日付欄とプルダウンの表示を state に合わせる(空欄ならデータ全体の端を表示)。
+   *
+   * **編集中の欄には書き戻さない**。`<input type=date>` は年や日のセグメントを
+   * 1つ消しただけでも value が "" になるため、打ち直している途中に書き戻すと
+   * 入力がデータ先頭日へ飛ばされて操作を奪う。
+   */
+  function syncPeriodDisplay() {
+    const range = state.fullRange;
+    // 打鍵の途中(確定前)だけは、その欄への書き戻しを止める
+    const editing = dateEdit && !dateEdit.isCommit ? dateEdit.source : null;
+    if (editing !== el.periodFrom) {
+      el.periodFrom.value = state.dateFrom || range.min || '';
+    }
+    if (editing !== el.periodTo) {
+      el.periodTo.value = state.dateTo || range.max || '';
+    }
+    el.periodSelect.value = currentPreset();
+  }
+
+  /** ファイル名に入れる期間タグ。全期間=all / 月ぴったり=YYYY-MM / それ以外=from_to。 */
+  function periodTag() {
+    const preset = currentPreset();
+    if (preset !== 'custom') return preset;
+    const from = el.periodFrom.value || 'start';
+    const to = el.periodTo.value || 'end';
+    return from === to ? from : `${from}_${to}`;
+  }
+
+  function onPresetChange() {
+    const v = el.periodSelect.value;
+    state.customPeriod = v === 'custom';
+    if (v === 'all') {
+      state.dateFrom = '';
+      state.dateTo = '';
+    } else if (v !== 'custom') {
+      const r = monthRange(v);
+      state.dateFrom = r.from;
+      state.dateTo = r.to;
+    }
+    render();
+    // 'custom' は範囲を変えない。何を操作すればよいか分かるよう開始日へ寄せる
+    if (v === 'custom') el.periodFrom.focus();
+  }
+
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+
+  /**
+   * 日付入力の反映。
+   *
+   * `change` だけに頼らない: WebKit(iOS Safari を含む)では日付欄の change が
+   * 発火しないことがあり、入力したのに出力範囲が変わらない状態になる。
+   * `input` も拾い、値が空か完全な YYYY-MM-DD のときだけ反映する
+   * (入力途中の "2026-07-2" のような値で再計算しないため)。
+   *
+   * **触っていない側は state を書き換えない**。日付欄は未指定のときデータ全体の
+   * 端を「表示上の初期値」として出しているだけで、それを確定させてしまうと、
+   * 後からカードを足したときにその日付より前の明細が無警告で落ちる
+   * (7474 だけ選んで終了日を直すと、開始日が 7474 の初回利用日で固定され、
+   *  あとから 5171 を足しても 5171 の古い明細が出てこない)。
+   */
+  function onDateInputChange(source, isCommit) {
+    const raw = source.value;
+    if (raw !== '' && !ISO_DATE.test(raw)) return;
+    // 入力途中は value が "" になる(年だけ消した等)。確定(change/blur)まで
+    // 「クリアした」とは解釈しない。ここで反映すると打鍵のたびに全期間へ戻る。
+    if (raw === '' && !isCommit) return;
+
+    let from = source === el.periodFrom ? raw : state.dateFrom;
+    let to = source === el.periodTo ? raw : state.dateTo;
+
+    // 開始 > 終了 になる入力だけは、触った側を優先してもう一方を寄せる。
+    // ここで未指定側が確定するが、その結果は日付欄にそのまま出るので黙って消えない。
+    const shownFrom = from || el.periodFrom.value;
+    const shownTo = to || el.periodTo.value;
+    if (shownFrom && shownTo && shownFrom > shownTo) {
+      if (source === el.periodFrom) to = shownFrom;
+      else from = shownTo;
+    }
+
+    state.customPeriod = true;
+    if (from === state.dateFrom && to === state.dateTo) {
+      if (isCommit) syncPeriodDisplay(); // 入力途中で空になった表示を戻す
+      else el.periodSelect.value = currentPreset();
+      return;
+    }
+    state.dateFrom = from;
+    state.dateTo = to;
+    dateEdit = { source, isCommit: Boolean(isCommit) };
+    try {
+      render();
+    } finally {
+      dateEdit = null;
+    }
   }
 
   // ------------------------------------------------------------ プレビュー生成
 
   function currentOptions() {
     const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
-    const { dateFrom, dateTo } = periodRange(state.period);
     return {
       cards: state.selectedCards,
       card: state.selectedCards[0] || '',
-      dateFrom,
-      dateTo,
+      dateFrom: state.dateFrom,
+      dateTo: state.dateTo,
       amountOverrides: state.overrides,
       category: el.category.value.trim() || Core.DEFAULT_OPTIONS.category,
       subcategory: el.subcategory.value.trim(),
@@ -452,11 +608,21 @@
       return;
     }
 
-    const { rows, notes, warnings, meta, months, unmatchedOverrides } = Core.convert(
-      state.orderRows,
-      state.refundRows,
-      opt
-    );
+    let result = Core.convert(state.orderRows, state.refundRows, opt);
+    // 自分で日付を打った結果が範囲外なら、それは意図した指定なので勝手に戻さない
+    if (!dateEdit && isOutsideData(result.range)) {
+      // 1回だけやり直す(全期間に戻せば必ずデータ範囲に収まるので再帰しない)
+      state.dateFrom = '';
+      state.dateTo = '';
+      state.customPeriod = false;
+      result = Core.convert(
+        state.orderRows,
+        state.refundRows,
+        Object.assign({}, opt, { dateFrom: '', dateTo: '' })
+      );
+      setActionStatus('選択中の期間にこのカードの明細が無いため、全期間に戻しました。');
+    }
+    const { rows, notes, warnings, meta, months, range, unmatchedOverrides } = result;
     // 対象カード・計上日の設定を変えて、入力済みの補正がどの注文にも当たらなくなった場合。
     // 黙って総額に戻ると気付けないため、その旨を明示する。
     if (unmatchedOverrides.length > 0) {
@@ -464,11 +630,10 @@
         `入力済みの実請求額 ${unmatchedOverrides.length} 件は、現在の条件では適用されていません(処理メモを確認してください)。`
       );
     }
-    renderPeriodOptions(months);
+    renderPeriodControls(months, range);
 
     state.csvText = Core.generateCsv(rows);
-    const periodTag = state.period === 'all' ? 'all' : state.period;
-    state.fileName = `zaim_import_${state.selectedCards.join('-')}_${periodTag}.csv`;
+    state.fileName = `zaim_import_${state.selectedCards.join('-')}_${periodTag()}.csv`;
 
     renderSummary(Core.summarize(rows));
     renderGiftWarnings(warnings);
@@ -477,10 +642,10 @@
 
     const grand = months.reduce((s, m) => s + m.total, 0);
     const grandCount = months.reduce((s, m) => s + m.count, 0);
-    el.periodScope.textContent =
-      state.period === 'all'
-        ? `対象カード ${state.selectedCards.join('・')} の全期間を出力します。`
-        : `${state.period} 分のみを出力します(このカードの全期間は ${grandCount}件 / ${formatYen(grand)})。`;
+    el.periodScope.textContent = isFullRange()
+      ? `対象カード ${state.selectedCards.join('・')} の全期間を出力します。`
+      : `${el.periodFrom.value} 〜 ${el.periodTo.value} 分のみを出力します` +
+        `(このカードの全期間は ${grandCount}件 / ${formatYen(grand)})。`;
 
     el.emptyResult.textContent =
       '条件に一致する明細がありませんでした。カードや期間の設定を確認してください。';
@@ -560,10 +725,13 @@
   for (const input of document.querySelectorAll('#settings-section input[type="radio"]')) {
     input.addEventListener('change', render);
   }
-  el.periodSelect.addEventListener('change', () => {
-    state.period = el.periodSelect.value;
-    render();
-  });
+  el.periodSelect.addEventListener('change', onPresetChange);
+  for (const input of [el.periodFrom, el.periodTo]) {
+    // どちらを編集したかを渡す(触っていない側の表示値を確定させないため)
+    input.addEventListener('blur', () => onDateInputChange(input, true)); // 離れた時点を確定とみなす
+    input.addEventListener('change', () => onDateInputChange(input, true));
+    input.addEventListener('input', () => onDateInputChange(input, false)); // WebKit で change が来ない対策
+  }
   for (const id of ['opt-category', 'opt-subcategory', 'opt-store', 'opt-source']) {
     $(id).addEventListener('input', render);
   }
