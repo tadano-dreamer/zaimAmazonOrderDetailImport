@@ -55,5 +55,51 @@ for (let i = 0; i < Math.max(js.length, golden.length); i++) {
     check(false, `行 ${i + 1} 不一致:\n  JS    : ${js[i]}\n  golden: ${golden[i]}`);
   }
 }
+// --- カード更新(5171 → 7474)・期間フィルタ・複数出荷 -----------------------
+// カード下4桁1つで絞ると、更新後の番号で買った分が丸ごと落ちる(実データで発生済み)。
+const succ = core.suggestSuccessors(core.detectCards(orderRows), ['5171']);
+check(
+  succ.some((c) => c.card === '7474'),
+  `5171 の後継カード候補として 7474 を検出 → ${succ.map((c) => c.card).join(',') || 'なし'}`
+);
+
+const newCard = core.convert(orderRows, refundRows, { cards: ['7474'] });
+const sNew = core.summarize(newCard.rows);
+check(sNew.count === 2 && sNew.total === 11670, `7474 単体 → ${sNew.count}件 / ${sNew.total}円`);
+check(
+  newCard.notes.some((n) => n.includes('分割計上')),
+  '複数出荷(" and " 連結)の分割計上メモあり'
+);
+
+const bothCards = core.convert(orderRows, refundRows, { cards: ['5171', '7474'] });
+const sBoth = core.summarize(bothCards.rows);
+check(
+  sBoth.count === 7 && sBoth.total === 15048 + 11670,
+  `5171+7474 合算 → ${sBoth.count}件 / ${sBoth.total}円`
+);
+
+const july = core.convert(orderRows, refundRows, {
+  cards: ['5171', '7474'],
+  dateFrom: '2026-07-01',
+  dateTo: '2026-07-31',
+});
+const sJuly = core.summarize(july.rows);
+check(
+  sJuly.count === 4 && sJuly.total === 4740 + 1280 + 1770 + 9900,
+  `2026-07 のみ → ${sJuly.count}件 / ${sJuly.total}円`
+);
+check(
+  july.months.length === 3 && july.months[july.months.length - 1].month === '2026-07',
+  `months は期間フィルタ前の全月 → ${july.months.map((m) => m.month).join(',')}`
+);
+
+// --- ギフト券併用の実請求額上書き ------------------------------------------
+const gift = core.convert(orderRows, refundRows, {}).warnings[0];
+const fixed = core.convert(orderRows, refundRows, { amountOverrides: { [gift.key]: 4091 } });
+check(
+  core.summarize(fixed.rows).total === 15048 - gift.rawAmount + 4091,
+  `ギフト券併用を実請求額(4,091円)に補正 → ${core.summarize(fixed.rows).total}円`
+);
+
 if (ok) console.log('[OK] ダミーデータ: JS 出力は Python 参照実装と完全一致');
 process.exitCode = ok ? 0 : 1;

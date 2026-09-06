@@ -160,6 +160,43 @@ select:focus, input[type="text"]:focus, .btn:focus-visible {
   outline-offset: 1px;
 }
 
+/* ---------- カード選択(複数可) ---------- */
+.card-list { display: grid; gap: 8px; margin-top: 8px; }
+.card-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 8px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+.card-item input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.card-item span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.card-item strong { font-size: 0.95rem; }
+.card-item small { font-size: 0.75rem; color: var(--text-sub); }
+.card-item:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.card-item:has(input:focus-visible) { outline: 3px solid rgba(14, 159, 91, 0.35); }
+
+/* ---------- ギフト券併用の実請求額入力 ---------- */
+.gift-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.gift-list li { display: grid; gap: 4px; }
+.gift-fix { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.85rem; }
+.gift-fix input[type="number"] {
+  width: 8em;
+  min-height: 40px;
+  font-size: 1rem;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.btn-small { min-height: 40px; font-size: 0.85rem; padding: 0 14px; border-radius: 10px; }
+
 .radio-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .radio-chip {
   flex: 1 1 130px;
@@ -264,6 +301,8 @@ td.item-cell { overflow: hidden; }
   word-break: break-word;
 }
 tr.row-gift td { background: var(--warn-bg); }
+/* カード明細側で出荷ごとに分割計上され得る行(合計は一致する) */
+tr.row-split td.col-amount { text-decoration: underline dotted; }
 
 /* ---------- アクション ---------- */
 .actions { display: grid; gap: 10px; margin-top: 14px; }

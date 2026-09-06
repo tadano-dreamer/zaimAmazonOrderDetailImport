@@ -82,6 +82,27 @@ async function captureCsvViaDownload(page) {
   return page.evaluate(() => window.__capturedCsv);
 }
 
+/**
+ * カードはチェックボックス(複数選択可)。指定した下4桁だけを選択状態にする。
+ * カード更新で下4桁が変わるため、単一選択だと切替以降が丸ごと落ちる(実データで発生)。
+ */
+async function selectCards(page, cards) {
+  await page.waitForSelector('#card-list input[type="checkbox"]');
+  await page.$$eval(
+    '#card-list input[type="checkbox"]',
+    (boxes, want) => {
+      for (const b of boxes) {
+        if (b.checked !== want.includes(b.value)) b.click();
+      }
+    },
+    cards
+  );
+}
+
+async function listCards(page) {
+  return page.$$eval('#card-list input[type="checkbox"]', (bs) => bs.map((b) => b.value));
+}
+
 async function runScenarios(browserName, page, errors, shotPrefix) {
   console.log(`\n=== ${browserName} ===`);
   await page.goto(`http://127.0.0.1:${PORT}/`);
@@ -117,14 +138,11 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
       '実ZIPでエラーなし'
     );
 
-    const options = await page.$$eval('#card-select option', (os) =>
-      os.map((o) => ({ value: o.value, label: o.textContent }))
-    );
-    check(options.length >= 2, `カードが複数検出される(${options.length}種)`);
-    const c5171 = options.find((o) => o.value === '5171');
-    check(!!c5171, `5171 が検出される(${c5171 ? c5171.label : 'なし'})`);
+    const cardValues = await listCards(page);
+    check(cardValues.length >= 2, `カードが複数検出される(${cardValues.length}種)`);
+    check(cardValues.includes('5171'), `5171 が検出される(${cardValues.join(',')})`);
 
-    await page.selectOption('#card-select', '5171');
+    await selectCards(page, ['5171']);
     await page.waitForFunction(
       () => document.getElementById('sum-count').textContent !== '–'
     );
@@ -198,7 +216,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     null,
     { timeout: 30000 }
   );
-  await page.selectOption('#card-select', '5171');
+  await selectCards(page, ['5171']);
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '5件'
   );
@@ -217,6 +235,107 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     `ダミー: ダウンロードCSVがPython出力と一致(${da.length}行)`
   );
   await page.screenshot({ path: path.join(SHOT_DIR, `${shotPrefix}-04-dummy-preview.png`), fullPage: true });
+
+  // --- シナリオ E: カード更新(5171 → 7474)への追従 -----------------------
+  // 実データでは 2026-07 にカードが切り替わり、5171 だけ選ぶと 41,139 円が消えた。
+  check(await page.isVisible('#card-switch-note'), 'ダミー: カード切替の警告が出る');
+  const switchText = await page.textContent('#card-switch-note');
+  check(switchText.includes('7474'), `警告に後継カード 7474 が出る → ${switchText.slice(0, 40)}…`);
+
+  await page.click('#card-switch-note button');
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '7件'
+  );
+  check((await page.textContent('#sum-count')) === '7件', '「追加」で 5171+7474 の 7件になる');
+  check(
+    (await page.textContent('#sum-total')) === '26,718円',
+    `5171+7474 合計 26,718円 → ${await page.textContent('#sum-total')}`
+  );
+  check(await page.isHidden('#card-switch-note'), '両方選ぶと切替警告が消える');
+  check(
+    (await page.textContent('#notes-box')).includes('分割計上'),
+    '複数出荷の分割計上メモが出る'
+  );
+
+  // --- シナリオ F: 期間(月)フィルタ ---------------------------------------
+  const periodOptions = await page.$$eval('#period-select option', (os) =>
+    os.map((o) => o.value)
+  );
+  check(
+    periodOptions[0] === 'all' && periodOptions.includes('2026-07'),
+    `期間プルダウンに月が並ぶ → ${periodOptions.join(',')}`
+  );
+  await page.selectOption('#period-select', '2026-07');
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '4件'
+  );
+  check((await page.textContent('#sum-count')) === '4件', '2026-07 のみ → 4件');
+  check(
+    (await page.textContent('#sum-total')) === '17,690円',
+    `2026-07 のみ → 17,690円(${await page.textContent('#sum-total')})`
+  );
+  const julyCsv = await captureCsvViaDownload(page);
+  check(
+    normalize(julyCsv).slice(1).every((l) => l.startsWith('2026-07-')),
+    '月指定のCSVはその月の行だけ'
+  );
+  await page.selectOption('#period-select', 'all');
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '7件'
+  );
+
+  // --- シナリオ G: ギフト券併用の実請求額を手動補正 -------------------------
+  // ギフト券の充当額は注文履歴に載らず、総額のままだと Zaim とズレる(実データ 5,760 vs 4,091)。
+  const beforeFix = await page.textContent('#sum-total');
+  await page.fill('#gift-warnings input[type="number"]', '4091');
+  await page.locator('#gift-warnings input[type="number"]').blur();
+  await page.waitForFunction(
+    (before) => document.getElementById('sum-total').textContent !== before,
+    beforeFix
+  );
+  check(
+    (await page.textContent('#sum-total')) === '25,049円',
+    `実請求額 4,091円に補正 → ${await page.textContent('#sum-total')}(26,718 − 5,760 + 4,091)`
+  );
+  check(
+    (await page.textContent('#notes-box')).includes('金額を手動指定'),
+    '手動補正が処理メモに残る'
+  );
+  const fixedCsv = await captureCsvViaDownload(page);
+  check(fixedCsv.includes(',4091'), '補正後の金額がCSVに入る');
+
+  // 元に戻す(以降のシナリオへの影響を避ける)
+  await page.fill('#gift-warnings input[type="number"]', '');
+  await page.locator('#gift-warnings input[type="number"]').blur();
+  await selectCards(page, ['5171']);
+  await page.selectOption('#period-select', 'all');
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '5件'
+  );
+
+  // --- シナリオ H: 同じ ZIP を選び直しても、期間の表示と実際の出力範囲が一致する ---
+  // 選択肢の中身が前回と同一だとプルダウンの再構築がスキップされる。表示だけ
+  // 「7月」のまま出力が全期間になると、取込済みの月まで再出力して Zaim で重複計上する。
+  await page.selectOption('#period-select', '2026-07');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '2件');
+  await page.evaluate(() => {
+    document.getElementById('load-status').textContent = '';
+  });
+  await page.setInputFiles('#zip-input', []);
+  await page.setInputFiles('#zip-input', DUMMY_ZIP); // カード選択も 5171 のまま復元される
+  await page.waitForFunction(
+    () => document.getElementById('load-status').textContent.includes('読み込み完了'),
+    null,
+    { timeout: 30000 }
+  );
+  const reloadedPeriod = await page.inputValue('#period-select');
+  const reloadedCount = await page.textContent('#sum-count');
+  check(reloadedPeriod === 'all', `ZIP再選択で期間の表示も全期間に戻る → ${reloadedPeriod}`);
+  // 表示が「全期間」なら5件、月指定なら2件でなければ、表示と中身が矛盾している
+  check(
+    (reloadedPeriod === 'all') === (reloadedCount === '5件'),
+    `表示(${reloadedPeriod})と実際の出力件数(${reloadedCount})が矛盾しない`
+  );
 
   // コピー(成功メッセージ or フォールバックの明示メッセージが出ること)
   await page.evaluate(() => {
@@ -312,7 +431,7 @@ async function main() {
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
     const status = await page.textContent('#load-status');
     check(status.includes('統合'), `統合の注記が表示される: "${status}"`);
-    await page.selectOption('#card-select', '5171');
+    await selectCards(page, ['5171']);
     await page.waitForFunction(() => document.getElementById('sum-count').textContent === '5件');
     check((await page.textContent('#sum-count')) === '5件', '分割ZIP: 件数 5件(全パーツ読込)');
     check(
@@ -335,7 +454,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.setInputFiles('#zip-input', DUMMY_ZIP);
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
-    await page.selectOption('#card-select', '5171');
+    await selectCards(page, ['5171']);
     const overflow = await page.evaluate(
       () => document.scrollingElement.scrollWidth - window.innerWidth
     );

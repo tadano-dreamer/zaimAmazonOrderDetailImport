@@ -38,9 +38,20 @@
     <section class="card" id="settings-section" aria-labelledby="step2-title" hidden>
       <h2 id="step2-title"><span class="step-no">2</span>抽出条件</h2>
 
+      <fieldset class="field">
+        <legend>支払いカード(自動検出・複数選択可)</legend>
+        <div class="card-list" id="card-list"></div>
+        <div class="notice notice-warn" id="card-switch-note" hidden></div>
+        <p class="hint">
+          カードを更新・再発行すると下4桁が変わります。家計簿上は同じ口座なので、
+          <strong>旧番号と新番号は両方選んでください</strong>(片方だけだと切替以降が丸ごと漏れます)。
+        </p>
+      </fieldset>
+
       <div class="field">
-        <label for="card-select">支払いカード(自動検出・件数付き)</label>
-        <select id="card-select"></select>
+        <label for="period-select">出力する期間</label>
+        <select id="period-select"></select>
+        <p class="hint">Zaimへは月ごとに取り込む想定です。月を選ぶとその月だけを出力します。</p>
       </div>
 
       <fieldset class="field">
@@ -91,6 +102,7 @@
         <ul id="notes-list"></ul>
       </details>
       <p class="notice notice-warn" id="empty-result" hidden>条件に一致する明細がありませんでした。カードや期間の設定を確認してください。</p>
+      <p class="hint" id="period-scope">–</p>
 
       <div class="table-wrap" id="table-wrap">
         <table id="preview-table">

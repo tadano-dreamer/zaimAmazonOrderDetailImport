@@ -20,6 +20,7 @@
 
   const DEFAULT_OPTIONS = {
     card: '5171',
+    cards: null, // 配列を渡すと複数カードを合算(カード再発行で下4桁が変わるケース用)
     category: '生活費',
     subcategory: 'ゆうすけインポート',
     store: 'Amazon',
@@ -27,7 +28,13 @@
     aggregate: true,
     jst: true,
     dateSource: 'ship', // 'ship'=発送日(既定・oracle と同じ) / 'order'=注文日
+    dateFrom: '', // 'YYYY-MM-DD' 以降(含む)。空なら下限なし
+    dateTo: '', // 'YYYY-MM-DD' 以前(含む)。空なら上限なし
+    amountOverrides: null, // { '<OrderID>\t<計上日>': 実請求額 } ギフト券併用等の手動補正
   };
+
+  /** Amazon は同一注文の複数出荷を " and " で連結して1セルに入れることがある。 */
+  const MULTI_VALUE_SEP = ' and ';
 
   // ------------------------------------------------------------------ 基本関数
 
@@ -45,11 +52,26 @@
   }
 
   /**
+   * '"A and B"' 形式(同一注文が複数出荷された行)を個々の値へ分解する。
+   * 単一値ならそのまま1要素、空なら空配列。
+   */
+  function splitDateValues(raw) {
+    const s = String(raw == null ? '' : raw).trim();
+    if (s === '') return [];
+    return s
+      .split(MULTI_VALUE_SEP)
+      .map((v) => v.trim())
+      .filter((v) => v !== '');
+  }
+
+  /**
    * ISO 日時("2026-07-08T21:06:11.011Z" 等)→ "YYYY-MM-DD"。
    * jst=true なら +9h して日本時間の日付を取る。パース不能なら先頭10文字。
+   * 複数出荷が " and " で連結された値は先頭(最初の出荷)を採用する。
    */
   function formatDate(raw, jst) {
-    const s = String(raw == null ? '' : raw).trim();
+    const values = splitDateValues(raw);
+    const s = values.length > 0 ? values[0] : '';
     const t = Date.parse(s);
     if (Number.isNaN(t)) return s.slice(0, 10);
     const d = new Date(jst ? t + JST_OFFSET_MS : t);
@@ -145,14 +167,17 @@
 
   /**
    * Order History の Payment Method Type からカード(ブランド+下4桁)を検出し、
-   * 明細件数付きで返す。件数降順。
-   * 例: [{card:"5171", brand:"Visa", count:56, label:"Visa - 5171(56件)"}, ...]
+   * 明細件数と利用期間(初回・最終の計上日)付きで返す。件数降順。
+   * 例: [{card:"5171", brand:"Visa", count:56, firstDate:"2025-03-27",
+   *       lastDate:"2026-07-09", label:"Visa - 5171(56件)"}, ...]
    */
-  function detectCards(orderRows) {
-    const found = new Map(); // last4 → {brand, count}
+  function detectCards(orderRows, jst) {
+    const useJst = jst === undefined ? true : jst;
+    const found = new Map(); // last4 → {brand, count, firstDate, lastDate}
     const re = /([A-Za-z][A-Za-z ]*?)\s*-\s*(\d{4})(?!\d)/g;
     for (const row of orderRows || []) {
       const pay = row['Payment Method Type'] || '';
+      const date = formatDate(row['Ship Date'] || row['Order Date'] || '', useJst);
       const seen = new Set(); // 同一明細内の重複カウント防止
       let m;
       re.lastIndex = 0;
@@ -161,10 +186,14 @@
         const last4 = m[2];
         if (seen.has(last4)) continue;
         seen.add(last4);
-        const e = found.get(last4) || { brand, count: 0 };
+        const e = found.get(last4) || { brand, count: 0, firstDate: '', lastDate: '' };
         e.count += 1;
         // ギフト券併用表記("...Card and Visa - 5171")より素のブランド名を優先
         if (!e.brand || brand.length < e.brand.length) e.brand = brand;
+        if (date) {
+          if (!e.firstDate || date < e.firstDate) e.firstDate = date;
+          if (!e.lastDate || date > e.lastDate) e.lastDate = date;
+        }
         found.set(last4, e);
       }
     }
@@ -174,6 +203,8 @@
         card: last4,
         brand: e.brand,
         count: e.count,
+        firstDate: e.firstDate,
+        lastDate: e.lastDate,
         label: `${e.brand} - ${last4}(${e.count}件)`,
       });
     }
@@ -181,20 +212,91 @@
     return cards;
   }
 
+  /**
+   * 選択中カードの「後継カード候補」を返す。
+   *
+   * カード更新・再発行で下4桁が変わると、Amazon 側の Payment Method Type だけが
+   * 切り替わり、家計簿上は同じ口座のまま。下4桁1つで絞ると切替以降が丸ごと
+   * 落ちるため、「選択カードが使われなくなった後に使われ始めたカード」を
+   * 候補として提示する(利用期間が重なるカードは別物なので除外)。
+   */
+  function suggestSuccessors(cards, selectedCards) {
+    const selected = new Set(selectedCards || []);
+    const picked = (cards || []).filter((c) => selected.has(c.card) && c.lastDate);
+    if (picked.length === 0) return [];
+    const lastUsed = picked.reduce((a, c) => (c.lastDate > a ? c.lastDate : a), '');
+    return (cards || []).filter(
+      (c) => !selected.has(c.card) && c.firstDate && c.firstDate > lastUsed
+    );
+  }
+
+  /** 出力行 → [{month:'YYYY-MM', count, total}] を日付昇順で。 */
+  function listMonths(rows) {
+    const acc = new Map();
+    for (const r of rows || []) {
+      const month = String(r[0] || '').slice(0, 7);
+      if (!month) continue;
+      const e = acc.get(month) || { month, count: 0, total: 0 };
+      e.count += 1;
+      e.total += Number(r[6]) || 0;
+      acc.set(month, e);
+    }
+    return [...acc.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
+  }
+
   // ---------------------------------------------------------------- 変換本体
+
+  /** 選択カード(下4桁)のいずれかを含むか。ギフト券併用表記も部分一致で拾う。 */
+  function matchesCard(paymentMethodType, cards) {
+    const pay = paymentMethodType || '';
+    for (const c of cards) if (c && pay.includes(c)) return true;
+    return false;
+  }
+
+  /** opt から実際に使うカード下4桁の配列を決める(cards 優先・空なら card)。 */
+  function resolveCards(opt) {
+    const list = Array.isArray(opt.cards) ? opt.cards.filter((c) => c) : [];
+    return list.length > 0 ? list : [opt.card].filter((c) => c);
+  }
+
+  /** 計上日が [dateFrom, dateTo] に入るか。空文字は無制限。 */
+  function inRange(date, from, to) {
+    if (from && date < from) return false;
+    if (to && date > to) return false;
+    return true;
+  }
 
   /**
    * 注文明細+返金 → Zaim 7列の出力行。amazon_to_zaim.py の convert() と等価。
    * @param {Array<Object>} orderRows  Order History.csv の行配列
    * @param {Array<Object>|Object} refundRows Refund Details.csv の行配列(または loadRefunds 済みマップ)
-   * @param {Object} options {card, category, subcategory, store, source, aggregate, jst}
-   * @returns {{rows: string[][], notes: string[], warnings: Array<Object>}}
+   * @param {Object} options {card|cards, category, subcategory, store, source, aggregate,
+   *                          jst, dateSource, dateFrom, dateTo, amountOverrides}
+   * @returns {{rows: string[][], notes: string[], warnings: Array<Object>,
+   *            meta: Array<Object>, months: Array<Object>}}
    *   warnings: ギフト券併用注文(カード実請求額と差が出得るもの)の一覧
+   *   meta    : rows と1:1で対応する付帯情報(グループキー・上書き有無・数量分割など)
+   *   months  : 期間フィルタ前の全月サマリ(月次出力の選択肢生成用)
    */
   function convert(orderRows, refundRows, options) {
     const opt = Object.assign({}, DEFAULT_OPTIONS, options || {});
+    const cards = resolveCards(opt);
+    const overrides = opt.amountOverrides || {};
     const refunds = Array.isArray(refundRows) ? loadRefunds(refundRows) : refundRows || {};
-    const notes = [];
+
+    // 注記は計上日つきで貯め、最後に期間フィルタと同じ範囲へ絞る。
+    // 月次で切り出したとき、他の月の返金・除外メモが混ざると読み手が混乱するため。
+    const noteEntries = [];
+    const notes = {
+      push(text, date) {
+        noteEntries.push({ text, date: date || '' });
+      },
+    };
+    const collectNotes = () =>
+      noteEntries
+        .filter((n) => !n.date || inRange(n.date, opt.dateFrom, opt.dateTo))
+        .map((n) => n.text);
+
     const entryDate = (r) =>
       opt.dateSource === 'order'
         ? formatDate(r['Order Date'] || r['Ship Date'] || '', opt.jst)
@@ -204,19 +306,21 @@
     const picked = [];
     for (const row of orderRows || []) {
       const pay = row['Payment Method Type'] || '';
-      if (!pay.includes(opt.card)) continue;
+      if (!matchesCard(pay, cards)) continue;
       const status = (row['Order Status'] || '').trim();
       if (NON_PURCHASE_STATUSES.has(status)) {
         notes.push(
           `除外(キャンセル): ${formatDate(row['Order Date'], opt.jst)} ` +
-            `${(row['Product Name'] || '').slice(0, 30)}`
+            `${(row['Product Name'] || '').slice(0, 30)}`,
+          entryDate(row)
         );
         continue;
       }
       if (parseAmount(row['Total Amount']) === null) {
         notes.push(
           `除外(金額不正): ${JSON.stringify(row['Total Amount'])} ` +
-            `${(row['Product Name'] || '').slice(0, 30)}`
+            `${(row['Product Name'] || '').slice(0, 30)}`,
+          entryDate(row)
         );
         continue;
       }
@@ -225,7 +329,7 @@
 
     if (!opt.aggregate) {
       // 旧挙動: 明細 1 行 = 1 エントリ(返金は無視)
-      const out = picked.map((r) => [
+      const all = picked.map((r) => [
         entryDate(r),
         opt.category,
         opt.subcategory,
@@ -234,8 +338,17 @@
         (r['Product Name'] || '').trim(),
         String(parseAmount(r['Total Amount'])),
       ]);
-      out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      return { rows: out, notes, warnings: [] };
+      all.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      const months = listMonths(all);
+      const out = all.filter((r) => inRange(r[0], opt.dateFrom, opt.dateTo));
+      return {
+        rows: out,
+        notes: collectNotes(),
+        warnings: [],
+        unmatchedOverrides: [],
+        meta: out.map((r) => ({ key: '', oid: '', date: r[0], amount: Number(r[6]) })),
+        months,
+      };
     }
 
     // 2) 出荷単位 (Order ID × 発送日) でグループ化
@@ -246,12 +359,24 @@
       const key = `${oid}\t${ship}`;
       let g = groups.get(key);
       if (!g) {
-        g = { oid, date: ship, amount: 0, names: [], gift: false };
+        g = { oid, date: ship, amount: 0, names: [], gift: false, shipmentCount: 1, shipmentDates: [] };
         groups.set(key, g);
       }
       g.amount += parseAmount(r['Total Amount']) || 0;
       g.names.push(r['Product Name'] || '');
       if (/Gift/i.test(r['Payment Method Type'] || '')) g.gift = true;
+
+      // 1明細が複数回に分けて出荷されると、Amazon は Ship Date を " and " で連結する。
+      // カードは出荷ごとに請求が立つため、明細1件がカード側では複数件に分かれる。
+      const shipValues = splitDateValues(
+        opt.dateSource === 'order'
+          ? r['Order Date'] || r['Ship Date']
+          : r['Ship Date'] || r['Order Date']
+      );
+      if (shipValues.length > g.shipmentCount) {
+        g.shipmentCount = shipValues.length;
+        g.shipmentDates = [...new Set(shipValues.map((v) => formatDate(v, opt.jst)))];
+      }
     }
 
     // 3) 返金を該当注文の(最も遅い発送日の)グループから差し引く
@@ -268,32 +393,112 @@
       target.amount -= refundAmt;
       target.refund = refundAmt;
       notes.push(
-        `返金反映: ${target.date} -${refundAmt}円 (注文 ${oid}) → 実質 ${target.amount}円`
+        `返金反映: ${target.date} -${refundAmt}円 (注文 ${oid}) → 実質 ${target.amount}円`,
+        target.date
       );
     }
 
-    // 4) Zaim 行へ整形(実質0円以下は除外)・ギフト券併用は警告に積む
-    const out = [];
-    const warnings = [];
+    // 4) 実請求額の手動上書き(ギフト券併用など、CSV からは復元できない差額の補正)
+    //
+    // キーは "<OrderID>	<計上日>" だが、計上日は dateSource / jst 設定で変わる。
+    // 設定を切り替えたとたんに補正が無言で外れると、ギフト券注文が総額のまま
+    // CSV に出てしまうため、注文が1グループしか持たない場合は Order ID 単独の
+    // キーも受け付ける(UI はこちらを使う)。どれにも当たらなかった上書きは
+    // 握り潰さず、注記と unmatchedOverrides で必ず表に出す。
+    const groupsByOrder = new Map();
     for (const g of groups.values()) {
+      if (!groupsByOrder.has(g.oid)) groupsByOrder.set(g.oid, []);
+      groupsByOrder.get(g.oid).push(g);
+    }
+    const usedOverrideKeys = new Set();
+    for (const [key, g] of groups) {
+      const single = (groupsByOrder.get(g.oid) || []).length === 1;
+      let hit = null;
+      if (Object.prototype.hasOwnProperty.call(overrides, key)) hit = key;
+      else if (single && Object.prototype.hasOwnProperty.call(overrides, g.oid)) hit = g.oid;
+      if (hit === null) continue;
+      usedOverrideKeys.add(hit);
+      const manual = parseAmount(overrides[hit]);
+      if (manual === null || manual === g.amount) continue;
+      notes.push(
+        `金額を手動指定: ${g.date} ${g.amount}円 → ${manual}円 (注文 ${g.oid})`,
+        g.date
+      );
+      g.overriddenFrom = g.amount;
+      g.amount = manual;
+    }
+    const unmatchedOverrides = Object.keys(overrides).filter((k) => !usedOverrideKeys.has(k));
+    for (const k of unmatchedOverrides) {
+      notes.push(`手動指定した金額を適用できませんでした(該当する注文なし): ${k}`);
+    }
+
+    // 5) Zaim 行へ整形(実質0円以下は除外)・ギフト券併用は警告に積む
+    const built = []; // {row, meta} を計上日でソートしてから期間で絞る
+    const warnings = [];
+    for (const [key, g] of groups) {
       if (g.amount <= 0) {
-        notes.push(`除外(実質0円/全額返金): ${g.date} ${combineNames(g.names).slice(0, 30)}`);
+        notes.push(
+          `除外(実質0円/全額返金): ${g.date} ${combineNames(g.names).slice(0, 30)}`,
+          g.date
+        );
         continue;
       }
       const names = combineNames(g.names);
-      out.push([g.date, opt.category, opt.subcategory, opt.store, opt.source, names, String(g.amount)]);
-      if (g.gift) {
-        warnings.push({
+      built.push({
+        row: [g.date, opt.category, opt.subcategory, opt.store, opt.source, names, String(g.amount)],
+        meta: {
+          key,
+          oid: g.oid,
           date: g.date,
           amount: g.amount,
+          names,
+          gift: g.gift,
+          splitShipment: g.shipmentCount > 1,
+          shipmentCount: g.shipmentCount,
+          refund: g.refund || 0,
+          overriddenFrom: g.overriddenFrom === undefined ? null : g.overriddenFrom,
+        },
+      });
+      if (g.shipmentCount > 1) {
+        const multiDay =
+          g.shipmentDates.length > 1
+            ? ` ※出荷日が複数(${g.shipmentDates.join(', ')})あるため先頭日で計上`
+            : '';
+        notes.push(
+          `${g.date} ${g.amount}円 は ${g.shipmentCount} 回に分けて出荷: ` +
+            `カード明細では出荷ごとに分割計上されることがあります(合計は一致)${multiDay}`,
+          g.date
+        );
+      }
+      if (g.gift) {
+        warnings.push({
+          key,
+          // 計上日が変わってもズレない上書きキー(1注文=1グループなら Order ID)
+          overrideKey: (groupsByOrder.get(g.oid) || []).length === 1 ? g.oid : key,
+          date: g.date,
+          amount: g.amount,
+          rawAmount: g.overriddenFrom === undefined ? g.amount : g.overriddenFrom,
           names,
           reason:
             'ギフト券併用注文: カードの実請求額はこの金額より少ない可能性があります(内訳分離不能・総額計上)',
         });
       }
     }
-    out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-    return { rows: out, notes, warnings };
+    built.sort((a, b) => (a.row[0] < b.row[0] ? -1 : a.row[0] > b.row[0] ? 1 : 0));
+
+    const months = listMonths(built.map((b) => b.row));
+    const kept = built.filter((b) => inRange(b.row[0], opt.dateFrom, opt.dateTo));
+    // 警告も出力範囲に合わせる。月次で切り出しているのに他月のギフト券注文が
+    // 並ぶと、対象外の注文へ実請求額を入力してしまう。
+    const keptKeys = new Set(kept.map((b) => b.meta.key));
+    return {
+      rows: kept.map((b) => b.row),
+      notes: collectNotes(),
+      warnings: warnings.filter((w) => keptKeys.has(w.key)),
+      meta: kept.map((b) => b.meta),
+      months,
+      unmatchedOverrides,
+    };
   }
 
   // ---------------------------------------------------------------- CSV 出力
@@ -329,10 +534,13 @@
     DEFAULT_OPTIONS,
     parseAmount,
     formatDate,
+    splitDateValues,
     parseCsv,
     combineNames,
     loadRefunds,
     detectCards,
+    suggestSuccessors,
+    listMonths,
     convert,
     generateCsv,
     summarize,

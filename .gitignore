@@ -14,4 +14,5 @@ Thumbs.db
 # E2E テスト(tests/)の生成物
 tests/node_modules/
 tests/screenshots/
+tests/uat-shots/
 tests/package-lock.json

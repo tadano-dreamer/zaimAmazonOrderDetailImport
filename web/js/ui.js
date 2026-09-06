@@ -17,7 +17,10 @@
     loadStatus: $('load-status'),
     loadError: $('load-error'),
     settings: $('settings-section'),
-    cardSelect: $('card-select'),
+    cardList: $('card-list'),
+    cardSwitchNote: $('card-switch-note'),
+    periodSelect: $('period-select'),
+    periodScope: $('period-scope'),
     category: $('opt-category'),
     subcategory: $('opt-subcategory'),
     store: $('opt-store'),
@@ -44,6 +47,10 @@
     refundRows: [],
     csvText: '',
     fileName: 'zaim_import.csv',
+    cards: [], // detectCards の結果
+    selectedCards: [], // 選択中のカード下4桁(複数可)
+    period: 'all', // 'all' | 'YYYY-MM'
+    overrides: {}, // 上書きキー(通常は Order ID) → 実請求額(ギフト券併用等の手動補正)
   };
 
   const IS_IOS =
@@ -160,14 +167,11 @@
       return;
     }
 
-    el.cardSelect.replaceChildren(
-      ...cards.map((c) => {
-        const o = document.createElement('option');
-        o.value = c.card;
-        o.textContent = c.label;
-        return o;
-      })
-    );
+    state.cards = cards;
+    state.selectedCards = [cards[0].card]; // 既定は最多利用カード
+    state.period = 'all';
+    state.overrides = {};
+    renderCardList();
 
     setStatus(
       `読み込み完了: 明細 ${state.orderRows.length} 件 / 返金 ${state.refundRows.length} 件 / カード ${cards.length} 種${multiNote}`
@@ -177,12 +181,136 @@
     render();
   }
 
+  // ------------------------------------------------------- カード選択(複数可)
+
+  /** 検出カードをチェックボックスで一覧表示。利用期間も出して切替に気付けるようにする。 */
+  function renderCardList() {
+    el.cardList.replaceChildren(
+      ...state.cards.map((c) => {
+        const label = document.createElement('label');
+        label.className = 'card-item';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = c.card;
+        box.checked = state.selectedCards.includes(c.card);
+        box.addEventListener('change', () => {
+          state.selectedCards = state.selectedCards.filter((x) => x !== c.card);
+          if (box.checked) state.selectedCards.push(c.card);
+          renderCardSwitchNote();
+          render();
+        });
+        const text = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = `${c.brand} - ${c.card}`;
+        const sub = document.createElement('small');
+        sub.textContent =
+          c.firstDate && c.lastDate
+            ? `${c.count}件 / ${c.firstDate} 〜 ${c.lastDate}`
+            : `${c.count}件`;
+        text.append(name, sub);
+        label.append(box, text);
+        return label;
+      })
+    );
+    renderCardSwitchNote();
+  }
+
+  /**
+   * 選択カードが使われなくなった後に始まったカードを「更新後の番号かもしれない」
+   * として提示する。ここを見落とすと切替以降が丸ごと欠落する(実データで発生済み)。
+   */
+  function renderCardSwitchNote() {
+    const successors = Core.suggestSuccessors(state.cards, state.selectedCards);
+    if (successors.length === 0) {
+      el.cardSwitchNote.hidden = true;
+      el.cardSwitchNote.replaceChildren();
+      return;
+    }
+    const selected = state.cards.filter((c) => state.selectedCards.includes(c.card));
+    const lastUsed = selected.reduce((a, c) => (c.lastDate > a ? c.lastDate : a), '');
+    el.cardSwitchNote.replaceChildren();
+    const head = document.createElement('strong');
+    head.textContent = '⚠️ カードが切り替わっている可能性があります';
+    const p = document.createElement('p');
+    p.style.margin = '4px 0 0';
+    p.textContent =
+      `選択中のカードは ${lastUsed} を最後に使われていません。その後に ` +
+      successors.map((c) => `${c.brand} - ${c.card}(${c.firstDate}〜)`).join('、') +
+      ' が使われています。同じカードの更新後の番号なら、こちらも選んでください。';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-small';
+    btn.style.marginTop = '8px';
+    btn.textContent = `＋ ${successors.map((c) => c.card).join('・')} も対象に追加`;
+    btn.addEventListener('click', () => {
+      for (const c of successors) {
+        if (!state.selectedCards.includes(c.card)) state.selectedCards.push(c.card);
+      }
+      renderCardList();
+      render();
+    });
+    el.cardSwitchNote.append(head, p, btn);
+    el.cardSwitchNote.hidden = false;
+  }
+
+  // ------------------------------------------------------------- 期間フィルタ
+
+  /** 'YYYY-MM' → その月の月初・月末('all' なら無制限)。 */
+  function periodRange(period) {
+    if (!period || period === 'all') return { dateFrom: '', dateTo: '' };
+    const [y, m] = period.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return { dateFrom: `${period}-01`, dateTo: `${period}-${String(lastDay).padStart(2, '0')}` };
+  }
+
+  /**
+   * 月プルダウンを(選択肢が変わったときだけ)組み直す。
+   *
+   * 組み直しをスキップした場合でも、表示値と state は必ず最後に同期させる。
+   * ここを早期 return の内側に置くと、同じ ZIP を選び直したときに
+   * 「プルダウンは7月なのに出力は全期間」という状態になり、
+   * 取込済みの月まで再出力して Zaim 側で重複計上する。
+   */
+  function renderPeriodOptions(months) {
+    const signature = months.map((m) => `${m.month}:${m.count}:${m.total}`).join('|');
+    if (el.periodSelect.dataset.signature !== signature) {
+      el.periodSelect.dataset.signature = signature;
+      const total = months.reduce((s, m) => s + m.count, 0);
+      const opts = [{ value: 'all', text: `全期間(${total}件)` }].concat(
+        months
+          .slice()
+          .reverse() // 新しい月を上に
+          .map((m) => ({
+            value: m.month,
+            text: `${m.month.replace('-', '年')}月(${m.count}件 / ${Number(m.total).toLocaleString('ja-JP')}円)`,
+          }))
+      );
+      el.periodSelect.replaceChildren(
+        ...opts.map((o) => {
+          const option = document.createElement('option');
+          option.value = o.value;
+          option.textContent = o.text;
+          return option;
+        })
+      );
+    }
+    // 選択中の月が選択肢に無ければ全期間へ戻し、表示と state を常に一致させる
+    const values = Array.from(el.periodSelect.options, (o) => o.value);
+    if (!values.includes(state.period)) state.period = 'all';
+    el.periodSelect.value = state.period;
+  }
+
   // ------------------------------------------------------------ プレビュー生成
 
   function currentOptions() {
     const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+    const { dateFrom, dateTo } = periodRange(state.period);
     return {
-      card: el.cardSelect.value,
+      cards: state.selectedCards,
+      card: state.selectedCards[0] || '',
+      dateFrom,
+      dateTo,
+      amountOverrides: state.overrides,
       category: el.category.value.trim() || Core.DEFAULT_OPTIONS.category,
       subcategory: el.subcategory.value.trim(),
       store: el.store.value.trim(),
@@ -199,29 +327,66 @@
     el.sumRange.textContent = summary.count ? `${summary.minDate} 〜 ${summary.maxDate}` : '–';
   }
 
+  /**
+   * ギフト券併用注文の警告。ギフト券の充当額は Order History に載らないため
+   * 総額で出るしかなく、カード実請求額とズレる(実データで 5,760円 vs 4,091円)。
+   * 取込前に正しい額へ直せるよう、ここで実請求額を入力できるようにする。
+   */
   function renderGiftWarnings(warnings) {
-    if (warnings.length > 0) {
-      el.giftWarnings.replaceChildren();
-      const head = document.createElement('strong');
-      head.textContent = `⚠️ ギフト券併用の注文が ${warnings.length} 件あります`;
-      const p = document.createElement('p');
-      p.style.margin = '4px 0 0';
-      p.textContent =
-        'カードの実請求額は表示金額より少ない可能性があります。Zaim取込後に手動で調整してください。';
-      el.giftWarnings.append(head, p);
-      const ul = document.createElement('ul');
-      ul.style.margin = '6px 0 0';
-      ul.style.paddingLeft = '18px';
-      for (const w of warnings) {
-        const li = document.createElement('li');
-        li.textContent = `${w.date} ${formatYen(w.amount)} ${w.names.slice(0, 40)}`;
-        ul.appendChild(li);
-      }
-      el.giftWarnings.appendChild(ul);
-      el.giftWarnings.hidden = false;
-    } else {
+    if (warnings.length === 0) {
       el.giftWarnings.hidden = true;
+      el.giftWarnings.replaceChildren();
+      el.giftWarnings.dataset.signature = '';
+      return;
     }
+    // 入力のたびに DOM を作り直すとフォーカスが飛んで連続入力できなくなるので、
+    // 対象の注文が変わっていないときは中身をそのまま残す(値はユーザーの入力が正)。
+    const signature = warnings.map((w) => `${w.overrideKey}:${w.rawAmount}:${w.date}`).join('|');
+    if (el.giftWarnings.dataset.signature === signature && !el.giftWarnings.hidden) return;
+    el.giftWarnings.dataset.signature = signature;
+    el.giftWarnings.replaceChildren();
+    const head = document.createElement('strong');
+    head.textContent = `⚠️ ギフト券併用の注文が ${warnings.length} 件あります`;
+    const p = document.createElement('p');
+    p.style.margin = '4px 0 0';
+    p.textContent =
+      'ギフト券の充当額は注文履歴に含まれないため、総額で計上されます。' +
+      'カード明細の実請求額が分かる場合は、下の欄に入力すればその額で出力します。';
+    el.giftWarnings.append(head, p);
+
+    const ul = document.createElement('ul');
+    ul.className = 'gift-list';
+    for (const w of warnings) {
+      const li = document.createElement('li');
+      const desc = document.createElement('div');
+      desc.textContent = `${w.date} ${w.names.slice(0, 40)}`;
+      const row = document.createElement('div');
+      row.className = 'gift-fix';
+      const orig = document.createElement('span');
+      orig.textContent = `注文総額 ${formatYen(w.rawAmount)} → 実請求額`;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.inputMode = 'numeric';
+      input.min = '0';
+      input.step = '1';
+      input.placeholder = String(w.rawAmount);
+      input.setAttribute('aria-label', `${w.date} の実請求額`);
+      const saved = state.overrides[w.overrideKey];
+      if (saved !== undefined && saved !== null && saved !== '') input.value = saved;
+      input.addEventListener('change', () => {
+        const v = input.value.trim();
+        if (v === '') delete state.overrides[w.overrideKey];
+        else state.overrides[w.overrideKey] = Number(v);
+        render();
+      });
+      const unit = document.createElement('span');
+      unit.textContent = '円';
+      row.append(orig, input, unit);
+      li.append(desc, row);
+      ul.appendChild(li);
+    }
+    el.giftWarnings.appendChild(ul);
+    el.giftWarnings.hidden = false;
   }
 
   function renderNotes(notes) {
@@ -241,12 +406,13 @@
   }
 
   // プレビュー表(商品名はtextContentで挿入・XSS安全)
-  function renderTable(rows, warnings) {
-    const giftDates = new Set(warnings.map((w) => `${w.date}\t${w.amount}\t${w.names}`));
+  function renderTable(rows, meta) {
     el.previewBody.replaceChildren(
-      ...rows.map((r) => {
+      ...rows.map((r, i) => {
+        const m = meta[i] || {};
         const tr = document.createElement('tr');
-        if (giftDates.has(`${r[0]}\t${Number(r[6])}\t${r[5]}`)) tr.classList.add('row-gift');
+        if (m.gift) tr.classList.add('row-gift');
+        if (m.splitShipment) tr.classList.add('row-split');
         const tdDate = document.createElement('td');
         tdDate.className = 'col-date';
         tdDate.textContent = r[0];
@@ -269,16 +435,55 @@
   function render() {
     if (!state.orderRows) return;
     const opt = currentOptions();
-    const { rows, notes, warnings } = Core.convert(state.orderRows, state.refundRows, opt);
+    if (opt.cards.length === 0) {
+      // カード未選択: 誤って全件出さないよう、空表示にして選択を促す
+      state.csvText = '';
+      renderSummary({ count: 0, total: 0, minDate: '', maxDate: '' });
+      renderGiftWarnings([]);
+      renderNotes([]);
+      renderTable([], []);
+      el.periodScope.textContent = '';
+      el.emptyResult.textContent = 'カードが1つも選択されていません。上でカードを選んでください。';
+      el.emptyResult.hidden = false;
+      el.tableWrap.hidden = true;
+      el.btnDownload.disabled = true;
+      el.btnShare.disabled = true;
+      el.btnCopy.disabled = true;
+      return;
+    }
+
+    const { rows, notes, warnings, meta, months, unmatchedOverrides } = Core.convert(
+      state.orderRows,
+      state.refundRows,
+      opt
+    );
+    // 対象カード・計上日の設定を変えて、入力済みの補正がどの注文にも当たらなくなった場合。
+    // 黙って総額に戻ると気付けないため、その旨を明示する。
+    if (unmatchedOverrides.length > 0) {
+      setActionStatus(
+        `入力済みの実請求額 ${unmatchedOverrides.length} 件は、現在の条件では適用されていません(処理メモを確認してください)。`
+      );
+    }
+    renderPeriodOptions(months);
 
     state.csvText = Core.generateCsv(rows);
-    state.fileName = `zaim_import_${opt.card}.csv`;
+    const periodTag = state.period === 'all' ? 'all' : state.period;
+    state.fileName = `zaim_import_${state.selectedCards.join('-')}_${periodTag}.csv`;
 
     renderSummary(Core.summarize(rows));
     renderGiftWarnings(warnings);
     renderNotes(notes);
-    renderTable(rows, warnings);
+    renderTable(rows, meta);
 
+    const grand = months.reduce((s, m) => s + m.total, 0);
+    const grandCount = months.reduce((s, m) => s + m.count, 0);
+    el.periodScope.textContent =
+      state.period === 'all'
+        ? `対象カード ${state.selectedCards.join('・')} の全期間を出力します。`
+        : `${state.period} 分のみを出力します(このカードの全期間は ${grandCount}件 / ${formatYen(grand)})。`;
+
+    el.emptyResult.textContent =
+      '条件に一致する明細がありませんでした。カードや期間の設定を確認してください。';
     const empty = rows.length === 0;
     el.emptyResult.hidden = !empty;
     el.tableWrap.hidden = empty;
@@ -350,11 +555,15 @@
     });
   });
 
-  for (const input of document.querySelectorAll(
-    '#settings-section select, #settings-section input'
-  )) {
+  // カードのチェックボックスと期間プルダウンは動的生成側で個別に配線しているため、
+  // ここでは固定のラジオ(計上日・まとめ方)だけをまとめて拾う。
+  for (const input of document.querySelectorAll('#settings-section input[type="radio"]')) {
     input.addEventListener('change', render);
   }
+  el.periodSelect.addEventListener('change', () => {
+    state.period = el.periodSelect.value;
+    render();
+  });
   for (const id of ['opt-category', 'opt-subcategory', 'opt-store', 'opt-source']) {
     $(id).addEventListener('input', render);
   }

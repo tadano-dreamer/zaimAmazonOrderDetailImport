@@ -16,12 +16,18 @@ Zaim インポート用 CSV (日付,カテゴリ,カテゴリの内訳,お店,�
 使い方 (PowerShell / bash 共通):
     python amazon_to_zaim.py                       # 既定 (カード5171)
     python amazon_to_zaim.py --card 1745           # 別のカード下4桁で抽出
+    python amazon_to_zaim.py --card 5171,7474      # カード更新で下4桁が変わった場合は両方指定
+    python amazon_to_zaim.py --month 2026-07       # その月だけ出力(月次取込用)
     python amazon_to_zaim.py --zip "Your Orders.zip"  # ZIP から解凍してから処理
     python amazon_to_zaim.py --no-aggregate        # 合算せず明細1行=1エントリ(旧挙動)
+
+注意: カード下4桁1つで絞ると、カード更新・再発行で番号が変わった時点以降が
+      丸ごと落ちる。--card は必ず実データの利用期間を見て指定すること。
 """
 from __future__ import annotations
 
 import argparse
+import calendar
 import csv
 import sys
 import zipfile
@@ -67,13 +73,26 @@ def parse_amount(raw: str) -> int | None:
         return None
 
 
+MULTI_VALUE_SEP = " and "   # 同一明細が複数回出荷されると Amazon はこの区切りで連結する
+
+
+def split_date_values(raw: str) -> list[str]:
+    """'A and B' 形式(複数出荷)を個々の値へ分解する。単一値なら1要素。"""
+    s = (raw or "").strip()
+    if not s:
+        return []
+    return [v.strip() for v in s.split(MULTI_VALUE_SEP) if v.strip()]
+
+
 def parse_date(raw: str, jst: bool = True) -> str:
     """'2025-04-13T07:22:17Z' -> '2025-04-13'。
 
     Amazon の日時は UTC(末尾 Z)。jst=True なら日本時間へ変換してから日付を取る
     (カード明細は日本時間基準のため、既定で JST)。失敗時は先頭10文字。
+    複数出荷が " and " で連結された値は先頭(最初の出荷)を採用する。
     """
-    raw = (raw or "").strip()
+    values = split_date_values(raw)
+    raw = values[0] if values else ""
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if jst:
@@ -111,16 +130,32 @@ def combine_names(names: list[str]) -> str:
     return ITEM_JOIN.join(f"{n}×{c}" if c > 1 else n for n, c in counts.items())
 
 
-def convert(rows: list[dict], refunds: dict[str, int], card: str,
+def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
             category: str, subcategory: str, store: str, source: str,
-            aggregate: bool, jst: bool) -> tuple[list[list[str]], list[str]]:
-    """抽出条件に合う行を Zaim 形式へ変換。戻り値: (出力行, 注記メッセージ)."""
+            aggregate: bool, jst: bool,
+            date_from: str = "", date_to: str = "") -> tuple[list[list[str]], list[str]]:
+    """抽出条件に合う行を Zaim 形式へ変換。戻り値: (出力行, 注記メッセージ).
+
+    card は下4桁の文字列または文字列リスト。カード更新で下4桁が変わった場合に
+    旧番号・新番号をまとめて指定できる(片方だけだと切替以降が丸ごと落ちる)。
+    date_from / date_to は計上日での絞り込み(空なら無制限)。
+    """
     notes: list[str] = []
+    cards = [card] if isinstance(card, str) else list(card)
+    cards = [c for c in cards if c]
+
+    def in_range(d: str) -> bool:
+        if date_from and d < date_from:
+            return False
+        if date_to and d > date_to:
+            return False
+        return True
 
     # 1) カード一致 & 購入成立の明細だけ残す
     picked: list[dict] = []
     for row in rows:
-        if card not in row.get("Payment Method Type", ""):
+        pay = row.get("Payment Method Type", "")
+        if not any(c in pay for c in cards):
             continue
         status = (row.get("Order Status") or "").strip()
         if status in NON_PURCHASE_STATUSES:
@@ -142,7 +177,7 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str,
             str(parse_amount(r.get("Total Amount", ""))),
         ] for r in picked]
         out.sort(key=lambda x: x[0])
-        return out, notes
+        return [r for r in out if in_range(r[0])], notes
 
     # 2) 出荷単位 (Order ID × 発送日) でグループ化
     groups: dict[tuple[str, str], dict] = {}
@@ -178,7 +213,7 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str,
         out.append([g["date"], category, subcategory, store, source,
                     combine_names(g["names"]), str(amt)])
     out.sort(key=lambda x: x[0])
-    return out, notes
+    return [r for r in out if in_range(r[0])], notes
 
 
 def main() -> None:
@@ -189,7 +224,15 @@ def main() -> None:
                     help="作業フォルダ (既定: リポジトリの data/ ・Your Orders/ が置かれた場所)")
     ap.add_argument("--zip", dest="zip_name", default=None,
                     help="解凍する ZIP ファイル名 (未指定なら解凍済み前提)")
-    ap.add_argument("--card", default=DEFAULT_CARD, help="抽出するカード下4桁")
+    ap.add_argument("--card", default=DEFAULT_CARD,
+                    help="抽出するカード下4桁。カンマ区切りで複数指定可 "
+                         "(カード更新で下4桁が変わった場合は旧番号と新番号の両方を指定する)")
+    ap.add_argument("--from", dest="date_from", default="",
+                    help="計上日の下限 YYYY-MM-DD (含む)")
+    ap.add_argument("--to", dest="date_to", default="",
+                    help="計上日の上限 YYYY-MM-DD (含む)")
+    ap.add_argument("--month", default="",
+                    help="計上日を YYYY-MM の1か月に絞る (--from/--to より優先)")
     ap.add_argument("--category", default=DEFAULT_CATEGORY)
     ap.add_argument("--subcategory", default=DEFAULT_SUBCATEGORY)
     ap.add_argument("--store", default=DEFAULT_STORE)
@@ -208,12 +251,20 @@ def main() -> None:
     refunds = load_refunds(base_dir / REFUND_CSV_REL)
     print(f"[INFO] Order History.csv: {len(rows)} 明細 / 返金データ: {len(refunds)} 注文")
 
+    cards = [c.strip() for c in args.card.split(",") if c.strip()]
+    date_from, date_to = args.date_from, args.date_to
+    if args.month:
+        year, month = (int(x) for x in args.month.split("-"))
+        last_day = calendar.monthrange(year, month)[1]
+        date_from, date_to = f"{args.month}-01", f"{args.month}-{last_day:02d}"
+
     out_rows, notes = convert(
-        rows, refunds, args.card, args.category, args.subcategory,
+        rows, refunds, cards, args.category, args.subcategory,
         args.store, args.source, args.aggregate, jst=(args.tz == "jst"),
+        date_from=date_from, date_to=date_to,
     )
 
-    out_name = args.out or f"zaim_import_{args.card}.csv"
+    out_name = args.out or f"zaim_import_{'-'.join(cards)}.csv"
     out_dir = base_dir / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / out_name
@@ -226,7 +277,7 @@ def main() -> None:
     mode = "出荷単位で合算" if args.aggregate else "明細1行=1エントリ"
     tzlabel = "日付=発送日/JST" if args.tz == "jst" else "日付=発送日/UTC"
     print(f"[OK] 出力: {out_path}  ({mode}, {tzlabel}, 支払い元={args.source or '空欄'})")
-    print(f"[OK] カード {args.card}: {len(out_rows)} エントリ / 合計 {total:,} 円")
+    print(f"[OK] カード {'/'.join(cards)}: {len(out_rows)} エントリ / 合計 {total:,} 円")
     if out_rows:
         print(f"[OK] 期間: {out_rows[0][0]} 〜 {out_rows[-1][0]}")
     if notes:

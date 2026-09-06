@@ -15,15 +15,20 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 
 1. `web/index.html` をブラウザで開く(ローカルなら `python -m http.server -d web` → `http://localhost:8000`)
 2. Amazon「データをリクエスト」で入手した `Your Orders.zip` をそのまま選択
-3. カード(自動検出・件数付き)と計上日(発送日JST推奨)を選ぶ
-4. プレビューを確認して「CSVをダウンロード」(iPhone は共有シート経由の保存も可)
+3. **カードを選ぶ(複数選択可・利用期間付きで自動検出)**
+   - カードを更新・再発行すると下4桁が変わる。家計簿上は同じ口座なので**旧番号と新番号を両方選ぶ**。
+   - 切替を検出すると画面が警告し、ワンタップで後継カードを追加できる。
+4. **出力する期間を選ぶ**(全期間 / 月単位)。Zaim へは月ごとに取り込む想定。
+5. ギフト券併用の警告が出たら、カード明細の**実請求額を入力して補正**する
+   (ギフト券の充当額は注文履歴に含まれないため、そのままだと総額で出る)
+6. プレビューを確認して「CSVをダウンロード」(iPhone は共有シート経由の保存も可)
 
 処理はすべてブラウザ内で完結し、注文データ・氏名・住所は外部送信されない。
 
 ### テスト
 
 ```bash
-node --test web/js/core.test.js        # 単体テスト(34件)
+node --test web/js/core.test.js        # 単体テスト(57件)
 node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
 cd tests && npm install && npx playwright install chromium webkit
@@ -75,6 +80,12 @@ python scripts/amazon_to_zaim.py
 # 別カードで抽出
 python scripts/amazon_to_zaim.py --card 1745
 
+# カード更新で下4桁が変わった場合は両方指定(片方だけだと切替以降が丸ごと落ちる)
+python scripts/amazon_to_zaim.py --card 5171,7474
+
+# 月次で取り込む
+python scripts/amazon_to_zaim.py --card 5171,7474 --month 2026-07
+
 # ZIPから解凍込みで実行(data/ に Your Orders.zip がある前提)
 python scripts/amazon_to_zaim.py --zip "Your Orders.zip"
 
@@ -89,5 +100,19 @@ python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
 - **出荷単位で合算**: 同一注文・同一発送日の明細を1件に合計
 - **発送日(既定 JST)で計上**: `Ship Date` を日本時間に変換して日付化
 - **返金を差引**: `Refund Details.csv` の返金額を該当注文から減算
+- **複数カードを合算**: カード更新で下4桁が変わっても取りこぼさない
+- **期間で絞り込み**: 月単位で切り出して Zaim へ取り込む
+- **ギフト券併用は手動補正**: 実請求額を入力するとその額で出力する
 
 詳細・根拠・検証値は `docs/IMPLEMENTATION.md` を参照。
+
+## Zaim 実績との突合状況(2026-09-06)
+
+Zaim のカード連携実績(2026-02〜07)と1件ずつ突合し、**6か月中5か月が1円まで一致**。
+残る差は Zaim 側の記録漏れ 1件(2,569円)だけで、これは本ツールが埋めるべき差分。
+検出した3つの欠陥(カード切替での欠落 41,139円 / ギフト券併用の過大 1,669円 /
+複数出荷の分割計上)と対策は `docs/IMPLEMENTATION.md` §9 に記載。
+
+> ⚠️ Amazon アカウントが違うと抽出できない: Zaim の「ともEPOS × Amazon」(21件)は
+> 別アカウントの購入で、このエクスポートには含まれない。取り込むにはそのアカウントで
+> 別途「データをリクエスト」する必要がある。
