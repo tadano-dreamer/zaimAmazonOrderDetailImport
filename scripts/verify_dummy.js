@@ -17,6 +17,7 @@ const BASE = path.resolve(__dirname, '..', 'testdata', 'dummy');
 const ORDER_CSV = path.join(BASE, 'Your Orders', 'Your Amazon Orders', 'Order History.csv');
 const REFUND_CSV = path.join(BASE, 'Your Orders', 'Your Returns & Refunds', 'Refund Details.csv');
 const GOLDEN_CSV = path.join(BASE, 'output', 'zaim_import_5171.csv');
+const GOLDEN_CSV_7474 = path.join(BASE, 'output', 'zaim_import_7474.csv');
 
 let ok = true;
 function check(cond, label) {
@@ -65,7 +66,19 @@ check(
 
 const newCard = core.convert(orderRows, refundRows, { cards: ['7474'] });
 const sNew = core.summarize(newCard.rows);
-check(sNew.count === 2 && sNew.total === 11670, `7474 単体 → ${sNew.count}件 / ${sNew.total}円`);
+check(sNew.count === 3 && sNew.total === 14670, `7474 単体 → ${sNew.count}件 / ${sNew.total}円`);
+// 7474 側にはギフト券併用かつ部分返金の注文が入っている。メモの注記は
+// 片方を elif にすると静かに消えるので、Python 出力とバイト単位で突き合わせる。
+check(
+  core.generateCsv(newCard.rows) === fs.readFileSync(GOLDEN_CSV_7474, 'utf8'),
+  '7474: JS 出力が Python 参照実装とバイト単位で一致(メモの注記含む)'
+);
+const giftRefundRow = newCard.rows.find((r) => r[core.COL.date] === '2026-07-24');
+check(
+  giftRefundRow[core.COL.memo].includes('返金300円を差引済み') &&
+    giftRefundRow[core.COL.memo].includes('ギフト券併用'),
+  `返金とギフト券併用の注記が両方出る → ${giftRefundRow[core.COL.memo].slice(0, 70)}`
+);
 check(
   newCard.notes.some((n) => n.includes('分割計上')),
   '複数出荷(" and " 連結)の分割計上メモあり'
@@ -74,7 +87,7 @@ check(
 const bothCards = core.convert(orderRows, refundRows, { cards: ['5171', '7474'] });
 const sBoth = core.summarize(bothCards.rows);
 check(
-  sBoth.count === 7 && sBoth.total === 15048 + 11670,
+  sBoth.count === 8 && sBoth.total === 15048 + 14670,
   `5171+7474 合算 → ${sBoth.count}件 / ${sBoth.total}円`
 );
 
@@ -85,12 +98,25 @@ const july = core.convert(orderRows, refundRows, {
 });
 const sJuly = core.summarize(july.rows);
 check(
-  sJuly.count === 4 && sJuly.total === 4740 + 1280 + 1770 + 9900,
+  sJuly.count === 5 && sJuly.total === 4740 + 1280 + 1770 + 9900 + 3000,
   `2026-07 のみ → ${sJuly.count}件 / ${sJuly.total}円`
 );
 check(
   july.months.length === 3 && july.months[july.months.length - 1].month === '2026-07',
   `months は期間フィルタ前の全月 → ${july.months.map((m) => m.month).join(',')}`
+);
+
+// --- 出力列が Zaim の取込設定と一致していること ------------------------------
+const settings = core.zaimImportSettings();
+const colOf = (label) => {
+  const v = (settings.find((x) => x.label === label) || {}).value || '';
+  return /列目/.test(v) ? Number(v.replace(/\D/g, '')) - 1 : -1;
+};
+check(
+  core.ZAIM_HEADER[colOf('支出の金額の列')] === '支出金額' &&
+    core.ZAIM_HEADER[colOf('品目の列')] === '品目' &&
+    core.ZAIM_HEADER[colOf('日付の列')] === '日付',
+  `取込設定の列番号が実ヘッダと一致(${core.ZAIM_HEADER.length}列)`
 );
 
 // --- ギフト券併用の実請求額上書き ------------------------------------------

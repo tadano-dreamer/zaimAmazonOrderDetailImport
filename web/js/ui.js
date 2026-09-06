@@ -42,6 +42,10 @@
     btnShare: $('btn-share'),
     btnCopy: $('btn-copy'),
     actionStatus: $('action-status'),
+    importSection: $('import-section'),
+    importSettings: $('import-settings'),
+    btnCopySettings: $('btn-copy-settings'),
+    settingsStatus: $('settings-status'),
   };
 
   const state = {
@@ -109,6 +113,7 @@
     state.refundRows = [];
     el.settings.hidden = true;
     el.result.hidden = true;
+    el.importSection.hidden = true; // 読み込みに失敗したとき古い案内を残さない
 
     if (!file) return;
     el.pickerLabel.textContent = file.name;
@@ -193,6 +198,8 @@
     );
     el.settings.hidden = false;
     el.result.hidden = false;
+    renderImportSettings();
+    el.importSection.hidden = false;
     render();
   }
 
@@ -576,12 +583,12 @@
         tdItem.className = 'item-cell';
         const clamp = document.createElement('div');
         clamp.className = 'item-clamp';
-        clamp.textContent = r[5];
-        tdItem.title = r[5];
+        clamp.textContent = r[Core.COL.item];
+        tdItem.title = m.names || r[Core.COL.item];
         tdItem.appendChild(clamp);
         const tdAmount = document.createElement('td');
         tdAmount.className = 'col-amount';
-        tdAmount.textContent = Number(r[6]).toLocaleString('ja-JP');
+        tdAmount.textContent = Number(r[Core.COL.amount]).toLocaleString('ja-JP');
         tr.append(tdDate, tdItem, tdAmount);
         return tr;
       })
@@ -655,6 +662,53 @@
     el.btnDownload.disabled = empty;
     el.btnShare.disabled = empty;
     el.btnCopy.disabled = empty;
+  }
+
+  // ------------------------------------------------- Zaim の取込設定の案内
+
+  /** 列番号は ZAIM_HEADER から機械的に導く(人が数えると取り違える)。 */
+  function renderImportSettings() {
+    el.importSettings.replaceChildren(
+      ...Core.zaimImportSettings().flatMap((s) => {
+        const dt = document.createElement('dt');
+        dt.textContent = s.label;
+        if (s.required) dt.className = 'is-required';
+        const dd = document.createElement('dd');
+        dd.textContent = s.value;
+        if (/列目$/.test(s.value)) dd.className = 'is-column';
+        return [dt, dd];
+      })
+    );
+  }
+
+  function importSettingsText() {
+    return [
+      'Zaim「一般的な CSV ファイルをアップロードする」の設定',
+      ...Core.zaimImportSettings().map((s) => `${s.label}: ${s.value}`),
+    ].join('\n');
+  }
+
+  async function copyImportSettings() {
+    const text = importSettingsText();
+    try {
+      await navigator.clipboard.writeText(text);
+      el.settingsStatus.textContent = '設定内容をコピーしました';
+    } catch (e) {
+      console.error('設定コピー失敗:', e);
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      el.settingsStatus.textContent = ok ? '設定内容をコピーしました' : 'コピーできませんでした';
+    }
+    clearTimeout(copyImportSettings._t);
+    copyImportSettings._t = setTimeout(() => {
+      el.settingsStatus.textContent = '';
+    }, 4000);
   }
 
   // ------------------------------------------------------------ 保存3経路
@@ -737,6 +791,9 @@
   }
 
   el.btnDownload.addEventListener('click', download);
+  el.btnCopySettings.addEventListener('click', () => {
+    copyImportSettings();
+  });
   el.btnCopy.addEventListener('click', () => {
     copyCsv();
   });

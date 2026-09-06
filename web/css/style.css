@@ -358,6 +358,30 @@ tr.row-gift td { background: var(--warn-bg); }
 /* カード明細側で出荷ごとに分割計上され得る行(合計は一致する) */
 tr.row-split td.col-amount { text-decoration: underline dotted; }
 
+/* ---------- Zaim 取込設定の案内 ---------- */
+.import-settings {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fbfdfc;
+}
+.import-settings dt { color: var(--text-sub); white-space: nowrap; }
+.import-settings dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.import-settings dd.is-column { color: var(--accent-dark); font-variant-numeric: tabular-nums; }
+.import-settings dt.is-required::after {
+  content: ' *';
+  color: var(--error);
+}
+
 /* ---------- アクション ---------- */
 .actions { display: grid; gap: 10px; margin-top: 14px; }
 .btn {
@@ -389,4 +413,6 @@ tr.row-split td.col-amount { text-decoration: underline dotted; }
   .app-header h1 { font-size: 1.7rem; }
   .actions { grid-template-columns: 1fr 1fr; }
   .actions .btn-primary { grid-column: 1 / -1; }
+  /* ボタンが1つだけの操作列(STEP4 の設定コピー)は半分幅にしない */
+  .actions .btn:only-child { grid-column: 1 / -1; }
 }

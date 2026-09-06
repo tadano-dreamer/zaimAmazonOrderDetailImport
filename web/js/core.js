@@ -12,7 +12,39 @@
 (function (global) {
   'use strict';
 
-  const ZAIM_HEADER = ['日付', 'カテゴリ', 'カテゴリの内訳', 'お店', '支払い元', '品目', '支出金額'];
+  /**
+   * 出力列。Zaim の「一般的な CSV ファイルをアップロードする」設定画面に並ぶ
+   * 項目と**同じ順序・同じ個数**にしてある。こうすると取込設定を上から順に
+   * 1,2,3… と入れるだけで済み、列番号の数え間違い(金額を1つ手前の品目列に
+   * 指定してしまう等)が起きない。ヘッダ名は Zaim 側では使われない。
+   */
+  const ZAIM_HEADER = [
+    '日付',
+    'カテゴリ',
+    'カテゴリの内訳',
+    'メモ',
+    'お店',
+    '支払元',
+    '入金先',
+    '品目',
+    '支出金額',
+  ];
+
+  /** ZAIM_HEADER の列番号(0始まり)。 */
+  const COL = {
+    date: 0,
+    category: 1,
+    subcategory: 2,
+    memo: 3,
+    store: 4,
+    source: 5,
+    receiver: 6,
+    item: 7,
+    amount: 8,
+  };
+
+  /** 品目の最大長。家計簿の一覧で読める長さに収める(全文はメモへ)。 */
+  const ITEM_MAX_LEN = 24;
   const NON_PURCHASE_STATUSES = new Set(['Cancelled', 'Canceled']);
   const ITEM_JOIN = ' / ';
   const JST_OFFSET_MS = 9 * 3600 * 1000;
@@ -151,6 +183,44 @@
     return parts.join(ITEM_JOIN);
   }
 
+  /**
+   * Amazon の商品名を家計簿で読める見出しに整える。
+   * 「【まとめ買い】」「[大容量]」のような宣伝ブロックを落として詰め、
+   * 長すぎるものは切る(落とした情報はメモに全文が残る)。
+   */
+  function shortenName(raw, maxLen) {
+    const limit = maxLen || ITEM_MAX_LEN;
+    // 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
+    // 閉じ括弧で止めると "【A[B]C】" で "C】" が残る
+    let s = String(raw == null ? '' : raw)
+      .replace(/【[^】]*】|［[^］]*］|\[[^\]]*\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (s === '') s = String(raw == null ? '' : raw).trim();
+    // slice はコード単位で切るため、絵文字などのサロゲートペアを分断して
+    // 孤立サロゲートを残す。UTF-8 に書き出す時点で「�」になり品目が壊れるので、
+    // コードポイント単位で数える。
+    const chars = Array.from(s);
+    return chars.length <= limit ? s : `${chars.slice(0, limit).join('').trim()}…`;
+  }
+
+  /**
+   * 出荷グループの商品名リスト → 品目欄の1行。
+   * 同名は ×N、種類が複数なら「先頭 ほかN点」に畳む。
+   */
+  function itemLabel(names) {
+    const counts = new Map();
+    for (const raw of names || []) {
+      const n = String(raw == null ? '' : raw).trim();
+      counts.set(n, (counts.get(n) || 0) + 1);
+    }
+    const kinds = [...counts.entries()];
+    if (kinds.length === 0) return '';
+    const [firstName, firstCount] = kinds[0];
+    const head = shortenName(firstName) + (firstCount > 1 ? `×${firstCount}` : '');
+    return kinds.length === 1 ? head : `${head} ほか${kinds.length - 1}点`;
+  }
+
   /** Refund Details.csv の行配列 → {Order ID: 返金合計額}。0/不正額はスキップ。 */
   function loadRefunds(refundRows) {
     const refunds = {};
@@ -251,7 +321,7 @@
       if (!month) continue;
       const e = acc.get(month) || { month, count: 0, total: 0 };
       e.count += 1;
-      e.total += Number(r[6]) || 0;
+      e.total += Number(r[COL.amount]) || 0;
       acc.set(month, e);
     }
     return [...acc.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
@@ -342,15 +412,16 @@
 
     if (!opt.aggregate) {
       // 旧挙動: 明細 1 行 = 1 エントリ(返金は無視)
-      const all = picked.map((r) => [
-        entryDate(r),
-        opt.category,
-        opt.subcategory,
-        opt.store,
-        opt.source,
-        (r['Product Name'] || '').trim(),
-        String(parseAmount(r['Total Amount'])),
-      ]);
+      const all = picked.map((r) => {
+        const name = (r['Product Name'] || '').trim();
+        return zaimRow({
+          date: entryDate(r),
+          memo: buildMemo([name], { oid: r['Order ID'] || '' }),
+          item: shortenName(name),
+          amount: parseAmount(r['Total Amount']),
+          opt,
+        });
+      });
       all.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
       const months = listMonths(all);
       const range = dateRange(all);
@@ -360,7 +431,13 @@
         notes: collectNotes(),
         warnings: [],
         unmatchedOverrides: [],
-        meta: out.map((r) => ({ key: '', oid: '', date: r[0], amount: Number(r[6]) })),
+        meta: out.map((r) => ({
+          key: '',
+          oid: '',
+          date: r[COL.date],
+          amount: Number(r[COL.amount]),
+          names: r[COL.memo].split(' / ')[0], // 品目は畳んでいるので全文はここから
+        })),
         months,
         range,
       };
@@ -460,7 +537,19 @@
       }
       const names = combineNames(g.names);
       built.push({
-        row: [g.date, opt.category, opt.subcategory, opt.store, opt.source, names, String(g.amount)],
+        row: zaimRow({
+          date: g.date,
+          memo: buildMemo(g.names, {
+            oid: g.oid,
+            gift: g.gift,
+            refund: g.refund || 0,
+            shipmentCount: g.shipmentCount,
+            overriddenFrom: g.overriddenFrom,
+          }),
+          item: itemLabel(g.names),
+          amount: g.amount,
+          opt,
+        }),
         meta: {
           key,
           oid: g.oid,
@@ -519,6 +608,72 @@
     };
   }
 
+  /** 出力1行を ZAIM_HEADER の並びで組み立てる(列順の唯一の定義点)。 */
+  function zaimRow({ date, memo, item, amount, opt }) {
+    const row = [];
+    row[COL.date] = date;
+    row[COL.category] = opt.category;
+    row[COL.subcategory] = opt.subcategory;
+    row[COL.memo] = memo;
+    row[COL.store] = opt.store;
+    row[COL.source] = opt.source;
+    row[COL.receiver] = ''; // 入金先は支出では使わないが、Zaim の設定画面と列番号を揃えるため残す
+    row[COL.item] = item;
+    row[COL.amount] = String(amount);
+    return row;
+  }
+
+  /**
+   * メモ欄。品目は一覧で読める長さに畳んでいるので、
+   * **全商品名と、家計簿側で判断が要る注記**をここに残す。
+   */
+  function buildMemo(names, info) {
+    const parts = [combineNames(names)];
+    if (info.refund) parts.push(`返金${info.refund}円を差引済み`);
+    if (info.overriddenFrom !== undefined && info.overriddenFrom !== null) {
+      parts.push(`注文総額${info.overriddenFrom}円→実請求額に補正`);
+    } else if (info.gift) {
+      parts.push('ギフト券併用のため実請求額と差がある可能性あり');
+    }
+    if (info.shipmentCount > 1) {
+      parts.push(`${info.shipmentCount}回に分けて出荷(カード明細では分割計上のことあり)`);
+    }
+    if (info.oid) parts.push(`注文 ${info.oid}`);
+    return parts.filter((x) => x).join(' / ');
+  }
+
+  /**
+   * Zaim の「一般的な CSV ファイルをアップロードする」画面で選ぶ値を、
+   * 実際の出力列から組み立てて返す。画面の項目と同じ並び・同じ文言。
+   *
+   * 列番号を人が数えると取り違える(実際に金額を1つ手前の列に指定していた)。
+   * ZAIM_HEADER から機械的に導くことで、列を足しても案内がズレない。
+   */
+  function zaimImportSettings() {
+    const at = (name) => {
+      const i = ZAIM_HEADER.indexOf(name);
+      return i < 0 ? '存在しない' : `${i + 1} 列目`;
+    };
+    return [
+      { label: '日付の列', value: at('日付'), required: true },
+      { label: 'カテゴリの列', value: at('カテゴリ') },
+      { label: 'カテゴリ内訳の列', value: at('カテゴリの内訳') },
+      { label: 'メモの列', value: at('メモ') },
+      { label: 'お店の列', value: at('お店') },
+      { label: '支払元の列', value: at('支払元') },
+      { label: '入金先の列', value: at('入金先') },
+      { label: '品目の列', value: at('品目') },
+      { label: '支出の金額の列', value: at('支出金額'), required: true },
+      { label: '収入の金額の列', value: '存在しない' },
+      { label: '振替の金額の列', value: '存在しない' },
+      { label: '振替か判別する列', value: '存在しない' },
+      { label: '集計の設定の列', value: '存在しない' },
+      { label: '金額表示', value: '支出の金額にマイナスがついていない' },
+      { label: 'タイトル', value: '1 行目はタイトルなのでアップロード対象から除く' },
+      { label: '区切り文字', value: 'カンマ' },
+    ];
+  }
+
   // ---------------------------------------------------------------- CSV 出力
 
   /** Python csv.writer と同じ最小クオート。カンマ/引用符/改行を含む時だけ "..."。 */
@@ -538,7 +693,7 @@
   function summarize(rows) {
     const list = rows || [];
     let total = 0;
-    for (const r of list) total += Number(r[6]) || 0;
+    for (const r of list) total += Number(r[COL.amount]) || 0;
     return {
       count: list.length,
       total,
@@ -549,12 +704,15 @@
 
   const api = {
     ZAIM_HEADER,
+    COL,
     DEFAULT_OPTIONS,
     parseAmount,
     formatDate,
     splitDateValues,
     parseCsv,
     combineNames,
+    shortenName,
+    itemLabel,
     loadRefunds,
     detectCards,
     suggestSuccessors,
@@ -563,6 +721,7 @@
     convert,
     generateCsv,
     summarize,
+    zaimImportSettings,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

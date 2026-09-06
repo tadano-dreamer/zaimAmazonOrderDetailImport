@@ -144,53 +144,55 @@ const DEFAULTS = {
 test('convert: フィクスチャ全体 ― 4エントリ・合計10,888円', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   assert.equal(rows.length, 4);
-  const total = rows.reduce((s, r) => s + Number(r[6]), 0);
+  const total = rows.reduce((s, r) => s + Number(r[8]), 0);
   assert.equal(total, 1657 + 1611 + 4740 + 2880); // 10,888
 });
 
 test('convert: 同一注文・同一発送日は合算(477+1180=1657)', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  const a = rows.find((r) => r[5].includes('紙コップ'));
+  const a = rows.find((r) => r[7].includes('紙コップ'));
   assert.ok(a);
-  assert.equal(a[6], '1657');
-  assert.equal(a[5], '紙コップ / シート');
+  assert.equal(a[8], '1657');
+  // 品目は一覧で読める見出し、全商品名はメモへ
+  assert.equal(a[7], '紙コップ ほか1点');
+  assert.ok(a[3].startsWith('紙コップ / シート'));
   assert.equal(a[0], '2026-06-30');
 });
 
 test('convert: 返金をネット集約(1811-200=1611)', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  const b = rows.find((r) => r[5] === 'レノア');
+  const b = rows.find((r) => r[7] === 'レノア');
   assert.ok(b);
-  assert.equal(b[6], '1611');
+  assert.equal(b[8], '1611');
 });
 
 test('convert: 数量2は ×2 表記で合算(2370×2=4740)・JST で 7/9 計上', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  const c = rows.find((r) => r[5].includes('今治'));
+  const c = rows.find((r) => r[7].includes('今治'));
   assert.ok(c);
-  assert.equal(c[6], '4740');
-  assert.equal(c[5], '今治×2');
+  assert.equal(c[8], '4740');
+  assert.equal(c[7], '今治×2');
   assert.equal(c[0], '2026-07-09');
 });
 
 test('convert: UTC モードでは今治は 7/8 計上', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, jst: false });
-  const c = rows.find((r) => r[5].includes('今治'));
+  const c = rows.find((r) => r[7].includes('今治'));
   assert.equal(c[0], '2026-07-08');
 });
 
 test('convert: ギフト券併用注文も部分一致で抽出される', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  const d = rows.find((r) => r[5] === '敷パッド');
+  const d = rows.find((r) => r[7] === '敷パッド');
   assert.ok(d);
-  assert.equal(d[6], '2880');
+  assert.equal(d[8], '2880');
   assert.equal(d[0], '2026-05-19');
 });
 
 test('convert: キャンセル・対象外カードは除外される', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  assert.ok(!rows.some((r) => r[5].includes('キャンセル品')));
-  assert.ok(!rows.some((r) => r[5].includes('対象外カード')));
+  assert.ok(!rows.some((r) => r[7].includes('キャンセル品')));
+  assert.ok(!rows.some((r) => r[7].includes('対象外カード')));
 });
 
 test('convert: 全額返金(net<=0)は出力しない', () => {
@@ -210,16 +212,16 @@ test('convert: 返金は最新発送日のグループから差し引く', () =>
   ];
   const refunds = [{ 'Order ID': 'Y', 'Refund Amount': '500' }];
   const { rows } = convert(orders, refunds, DEFAULTS);
-  const first = rows.find((r) => r[5] === '先発送');
-  const last = rows.find((r) => r[5] === '後発送');
-  assert.equal(first[6], '1000');
-  assert.equal(last[6], '1500');
+  const first = rows.find((r) => r[7] === '先発送');
+  const last = rows.find((r) => r[7] === '後発送');
+  assert.equal(first[8], '1000');
+  assert.equal(last[8], '1500');
 });
 
 test('convert: 対象外注文への返金は無視される', () => {
   const refunds = [{ 'Order ID': 'ZZZ', 'Refund Amount': '999' }];
   const { rows } = convert(FIXTURE_ORDERS, refunds, DEFAULTS);
-  const total = rows.reduce((s, r) => s + Number(r[6]), 0);
+  const total = rows.reduce((s, r) => s + Number(r[8]), 0);
   assert.equal(total, 1657 + 1811 + 4740 + 2880);
 });
 
@@ -237,14 +239,28 @@ test('convert: Ship Date 空なら Order Date にフォールバック', () => {
   assert.equal(rows[0][0], '2026-06-15');
 });
 
-test('convert: 固定値(カテゴリ・内訳・お店・支払い元)が7列に入る', () => {
+test('convert: 固定値が Zaim の取込設定と同じ列位置に入る(9列)', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const { COL, ZAIM_HEADER } = require('./core.js');
+  assert.deepEqual(ZAIM_HEADER, [
+    '日付',
+    'カテゴリ',
+    'カテゴリの内訳',
+    'メモ',
+    'お店',
+    '支払元',
+    '入金先',
+    '品目',
+    '支出金額',
+  ]);
   for (const r of rows) {
-    assert.equal(r.length, 7);
-    assert.equal(r[1], '生活費');
-    assert.equal(r[2], 'ゆうすけインポート');
-    assert.equal(r[3], 'Amazon');
-    assert.equal(r[4], 'ゆうEPOS');
+    assert.equal(r.length, 9);
+    assert.equal(r[COL.category], '生活費');
+    assert.equal(r[COL.subcategory], 'ゆうすけインポート');
+    assert.equal(r[COL.store], 'Amazon');
+    assert.equal(r[COL.source], 'ゆうEPOS');
+    assert.equal(r[COL.receiver], ''); // 支出では使わないが列は空けておく
+    assert.ok(r[COL.memo].length > 0);
   }
 });
 
@@ -254,8 +270,8 @@ test('convert: aggregate=false は明細1行=1エントリ・返金無視', () =
     aggregate: false,
   });
   assert.equal(rows.length, 6); // A×2, B, C×2, D(キャンセル・他カード除外)
-  const b = rows.find((r) => r[5] === 'レノア');
-  assert.equal(b[6], '1811'); // 返金は引かれない
+  const b = rows.find((r) => r[7] === 'レノア');
+  assert.equal(b[8], '1811'); // 返金は引かれない
 });
 
 test('convert: dateSource=order は注文日で計上する', () => {
@@ -310,10 +326,12 @@ test('detectCards: Payment Method Type からカードを件数付きで検出',
 // ---------------------------------------------------------------- generateCsv
 test('generateCsv: ヘッダ + BOM + CRLF・カンマ含みフィールドをクオート', () => {
   const csv = generateCsv([
-    ['2026-06-30', '生活費', 'ゆうすけインポート', 'Amazon', 'ゆうEPOS', 'A / B', '1657'],
-    ['2026-07-01', '生活費', 'ゆうすけインポート', 'Amazon', 'ゆうEPOS', 'X, Y', '100'],
+    ['2026-06-30', '生活費', 'ゆうすけインポート', 'memo', 'Amazon', 'ゆうEPOS', '', 'A / B', '1657'],
+    ['2026-07-01', '生活費', 'ゆうすけインポート', 'memo', 'Amazon', 'ゆうEPOS', '', 'X, Y', '100'],
   ]);
-  assert.ok(csv.startsWith('﻿日付,カテゴリ,カテゴリの内訳,お店,支払い元,品目,支出金額\r\n'));
+  assert.ok(
+    csv.startsWith('﻿日付,カテゴリ,カテゴリの内訳,メモ,お店,支払元,入金先,品目,支出金額\r\n')
+  );
   assert.ok(csv.includes('"X, Y"'));
   assert.ok(csv.endsWith('\r\n'));
   // クオート不要なフィールドはクオートしない(Python csv.writer と同じ最小クオート)
@@ -322,7 +340,7 @@ test('generateCsv: ヘッダ + BOM + CRLF・カンマ含みフィールドをク
 });
 
 test('generateCsv: 引用符を含むフィールドは "" にエスケープ', () => {
-  const csv = generateCsv([['2026-01-01', 'c', 's', 'st', 'so', 'say "hi"', '1']]);
+  const csv = generateCsv([['2026-01-01', 'c', 's', 'm', 'st', 'so', '', 'say "hi"', '1']]);
   assert.ok(csv.includes('"say ""hi"""'));
 });
 
@@ -398,7 +416,7 @@ test('convert: cards 配列で複数カードを合算できる(カード再発�
   const both = convert(rows, [], Object.assign({}, DEFAULTS, { cards: ['5171', '7474'] }));
   assert.equal(both.rows.length, 2);
   assert.equal(
-    both.rows.reduce((s, r) => s + Number(r[6]), 0),
+    both.rows.reduce((s, r) => s + Number(r[8]), 0),
     3000
   );
 });
@@ -451,7 +469,7 @@ test('convert: dateFrom / dateTo で計上日を月単位に絞り込める', ()
   );
   assert.equal(rows.length, 2); // 1657(6/30) と 1611(6/30)
   assert.equal(
-    rows.reduce((s, r) => s + Number(r[6]), 0),
+    rows.reduce((s, r) => s + Number(r[8]), 0),
     1657 + 1611
   );
 });
@@ -462,7 +480,7 @@ test('convert: 期間で切り出しても返金差引後の金額が保たれ�
     FIXTURE_REFUNDS,
     Object.assign({}, DEFAULTS, { dateFrom: '2026-06-01', dateTo: '2026-06-30' })
   );
-  assert.ok(june.rows.some((r) => Number(r[6]) === 1611));
+  assert.ok(june.rows.some((r) => Number(r[8]) === 1611));
 });
 
 test('convert: months に期間フィルタ前の全月とその件数・合計が入る', () => {
@@ -482,9 +500,9 @@ test('convert: months に期間フィルタ前の全月とその件数・合計�
 
 test('listMonths: 出力行から月ごとの件数・合計を集計する', () => {
   const months = listMonths([
-    ['2026-06-30', '', '', '', '', 'a', '100'],
-    ['2026-06-01', '', '', '', '', 'b', '200'],
-    ['2026-07-01', '', '', '', '', 'c', '300'],
+    ['2026-06-30', '', '', '', '', '', '', 'a', '100'],
+    ['2026-06-01', '', '', '', '', '', '', 'b', '200'],
+    ['2026-07-01', '', '', '', '', '', '', 'c', '300'],
   ]);
   assert.deepEqual(months, [
     { month: '2026-06', count: 2, total: 300 },
@@ -506,7 +524,7 @@ test('convert: amountOverrides で実請求額に上書きできる(ギフト券
     Object.assign({}, DEFAULTS, { amountOverrides: overrides })
   );
   const row = fixed.rows.find((r) => r[0] === gift.date);
-  assert.equal(row[6], '1500');
+  assert.equal(row[8], '1500');
   assert.ok(
     fixed.notes.some((n) => n.includes('金額を手動指定')),
     fixed.notes.join(' / ')
@@ -572,7 +590,7 @@ test('convert: meta は rows と同じ並び・同じ長さで返る', () => {
   assert.equal(meta.length, rows.length);
   for (let i = 0; i < rows.length; i++) {
     assert.equal(meta[i].date, rows[i][0]);
-    assert.equal(String(meta[i].amount), rows[i][6]);
+    assert.equal(String(meta[i].amount), rows[i][8]);
   }
 });
 
@@ -634,8 +652,8 @@ test('convert: overrideKey は Order ID なので計上日の設定を変えて�
       FIXTURE_REFUNDS,
       Object.assign({}, DEFAULTS, opts, { amountOverrides: overrides })
     );
-    const row = r.rows.find((x) => x[5].includes('敷パッド'));
-    assert.equal(row[6], '1500', `dateSource=${opts.dateSource} jst=${opts.jst} で補正が外れた`);
+    const row = r.rows.find((x) => x[7].includes('敷パッド'));
+    assert.equal(row[8], '1500', `dateSource=${opts.dateSource} jst=${opts.jst} で補正が外れた`);
     assert.deepEqual(r.unmatchedOverrides, []);
   }
 });
@@ -662,7 +680,7 @@ test('convert: 1注文が複数グループに割れる場合は Order ID 単独
   const r = convert(rows, [], Object.assign({}, DEFAULTS, { amountOverrides: { M: 500 } }));
   assert.equal(r.rows.length, 2);
   assert.deepEqual(
-    r.rows.map((x) => x[6]),
+    r.rows.map((x) => x[8]),
     ['1000', '2000']
   );
   assert.deepEqual(r.unmatchedOverrides, ['M']);
@@ -674,7 +692,7 @@ test('convert: 1注文が複数グループに割れる場合は Order ID 単独
     Object.assign({}, DEFAULTS, { amountOverrides: { 'M\t2026-07-05': 500 } })
   );
   assert.deepEqual(
-    r2.rows.map((x) => x[6]),
+    r2.rows.map((x) => x[8]),
     ['1000', '500']
   );
   assert.deepEqual(r2.unmatchedOverrides, []);
@@ -686,9 +704,9 @@ const { dateRange } = require('./core.js');
 test('dateRange: 出力行の計上日レンジを返す(空なら空文字)', () => {
   assert.deepEqual(
     dateRange([
-      ['2026-06-30', '', '', '', '', 'a', '1'],
-      ['2026-05-01', '', '', '', '', 'b', '1'],
-      ['2026-07-09', '', '', '', '', 'c', '1'],
+      ['2026-06-30', '', '', '', '', '', '', 'a', '1'],
+      ['2026-05-01', '', '', '', '', '', '', 'b', '1'],
+      ['2026-07-09', '', '', '', '', '', '', 'c', '1'],
     ]),
     { min: '2026-05-01', max: '2026-07-09' }
   );
@@ -729,7 +747,7 @@ test('convert: 月をまたぐ任意の日付範囲を切り出せる', () => {
   );
   assert.equal(rows.length, 3); // 1657 / 1611 / 4740
   assert.equal(
-    rows.reduce((s, r) => s + Number(r[6]), 0),
+    rows.reduce((s, r) => s + Number(r[8]), 0),
     1657 + 1611 + 4740
   );
 });
@@ -748,4 +766,154 @@ test('convert: dateFrom だけ / dateTo だけの片側指定も効く', () => {
     Object.assign({}, DEFAULTS, { dateTo: '2026-05-31' })
   );
   assert.deepEqual(to.rows.map((r) => r[0]), ['2026-05-19']);
+});
+
+// =====================================================================
+// 2026-09-07 追加: Zaim の取込画面に合わせた列構成と、品目/メモの整形
+//   Zaim は CSV のヘッダ名を見ず「N 列目」で列を指定する。実機では
+//   「支出の金額の列 = 6 列目」(＝品目の位置)が選ばれていて取込が壊れていた。
+// =====================================================================
+
+const { shortenName, itemLabel, zaimImportSettings } = require('./core.js');
+
+// ------------------------------------------------------------- shortenName
+test('shortenName: 宣伝ブロックを落として詰める', () => {
+  assert.equal(
+    shortenName('【まとめ買い】ニトリ 毎日とりかえキッチンスポンジ'),
+    'ニトリ 毎日とりかえキッチンスポンジ'
+  );
+  assert.equal(shortenName('【Amazon限定】[2個セット]石けん'), '石けん');
+  assert.equal(shortenName('レノア ハピネス【大容量】柔軟剤'), 'レノア ハピネス 柔軟剤');
+});
+
+test('shortenName: 開き括弧と同じ種類の閉じ括弧で1組にする', () => {
+  // 種類を問わず最も近い閉じ括弧で止めると "C】" が残ってしまう
+  assert.equal(shortenName('【A[B]C】ネスト'), 'ネスト');
+});
+
+test('shortenName: 括弧が閉じない・全部が装飾・空文字でも壊れない', () => {
+  assert.equal(shortenName('【閉じ忘れ 商品名'), '【閉じ忘れ 商品名');
+  assert.equal(shortenName('【全部装飾】'), '【全部装飾】'); // 空になるなら元を返す
+  assert.equal(shortenName(''), '');
+  assert.equal(shortenName(null), '');
+  assert.equal(shortenName(undefined), '');
+});
+
+test('shortenName: 長い名前は切り詰めて … を付ける', () => {
+  const s = 'あ'.repeat(40);
+  const out = shortenName(s);
+  assert.equal(Array.from(out).length, 25); // 24文字 + …
+  assert.ok(out.endsWith('…'));
+  assert.equal(shortenName('あ'.repeat(24)), 'あ'.repeat(24)); // ちょうどは切らない
+});
+
+test('shortenName: サロゲートペアを分断しない(CSVに � が混ざらない)', () => {
+  // slice はコード単位で切るため、絵文字がちょうど境界にあると片方だけ残り、
+  // UTF-8 に書き出した時点で置換文字になる
+  const out = shortenName(`${'A'.repeat(23)}🎉BBBB`);
+  const roundTrip = new TextDecoder().decode(new TextEncoder().encode(out));
+  assert.equal(roundTrip, out);
+  assert.ok(!roundTrip.includes('�'), `孤立サロゲート: ${JSON.stringify(out)}`);
+});
+
+// --------------------------------------------------------------- itemLabel
+test('itemLabel: 1種類はそのまま、同名は ×N、複数種類は「ほかN点」', () => {
+  assert.equal(itemLabel(['タオル']), 'タオル');
+  assert.equal(itemLabel(['タオル', 'タオル']), 'タオル×2');
+  assert.equal(itemLabel(['タオル', '石けん']), 'タオル ほか1点');
+  assert.equal(itemLabel(['タオル', '石けん', '洗剤']), 'タオル ほか2点');
+  assert.equal(itemLabel([]), '');
+});
+
+// ------------------------------------------------------------------- メモ
+test('convert: メモに全商品名・注文IDが入る', () => {
+  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const { COL } = require('./core.js');
+  const a = rows.find((r) => r[COL.item].includes('紙コップ'));
+  assert.equal(a[COL.memo], '紙コップ / シート / 注文 A');
+});
+
+test('convert: メモに返金の注記が入る', () => {
+  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const { COL } = require('./core.js');
+  const b = rows.find((r) => r[COL.item] === 'レノア');
+  assert.ok(b[COL.memo].includes('返金200円を差引済み'), b[COL.memo]);
+});
+
+test('convert: 返金とギフト券併用が重なっても両方の注記が出る', () => {
+  // 片方を else if にすると、返金がある注文だけギフト券の注記が静かに消える
+  const rows = [
+    orderRow(
+      'Gift Certificate/Card and Visa - 5171',
+      'G',
+      '2026-06-01T00:00:00Z',
+      'ギフト券+返金',
+      '3,300',
+      'Closed'
+    ),
+  ];
+  const { rows: out } = convert(rows, [{ 'Order ID': 'G', 'Refund Amount': '300' }], DEFAULTS);
+  const { COL } = require('./core.js');
+  assert.equal(out[0][COL.amount], '3000');
+  assert.ok(out[0][COL.memo].includes('返金300円を差引済み'), out[0][COL.memo]);
+  assert.ok(out[0][COL.memo].includes('ギフト券併用'), out[0][COL.memo]);
+});
+
+test('convert: 実請求額を上書きしたらメモにも残る', () => {
+  const base = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const overrides = {};
+  overrides[base.warnings[0].overrideKey] = 1500;
+  const fixed = convert(
+    FIXTURE_ORDERS,
+    FIXTURE_REFUNDS,
+    Object.assign({}, DEFAULTS, { amountOverrides: overrides })
+  );
+  const { COL } = require('./core.js');
+  const d = fixed.rows.find((r) => r[COL.item] === '敷パッド');
+  assert.equal(d[COL.amount], '1500');
+  assert.ok(d[COL.memo].includes('注文総額2880円→実請求額に補正'), d[COL.memo]);
+});
+
+test('convert: 複数出荷の注記がメモに入る', () => {
+  const row = orderRow(
+    'Visa - 5171',
+    'S',
+    '2026-07-21T08:00:00Z and 2026-07-21T08:00:10Z',
+    '収納ボックス',
+    '9,900',
+    'Closed'
+  );
+  const { rows } = convert([row], [], DEFAULTS);
+  const { COL } = require('./core.js');
+  assert.ok(rows[0][COL.memo].includes('2回に分けて出荷'), rows[0][COL.memo]);
+});
+
+// ------------------------------------------------------- zaimImportSettings
+test('zaimImportSettings: 列番号を ZAIM_HEADER から機械的に導く', () => {
+  const { ZAIM_HEADER } = require('./core.js');
+  const settings = zaimImportSettings();
+  const valueOf = (label) => (settings.find((s) => s.label === label) || {}).value;
+  const colOf = (label) => Number(String(valueOf(label)).replace(/\D/g, '')) - 1;
+
+  // 案内の列番号が、実際のヘッダ位置と一致していること(ここがズレると取込が壊れる)
+  assert.equal(ZAIM_HEADER[colOf('日付の列')], '日付');
+  assert.equal(ZAIM_HEADER[colOf('カテゴリの列')], 'カテゴリ');
+  assert.equal(ZAIM_HEADER[colOf('カテゴリ内訳の列')], 'カテゴリの内訳');
+  assert.equal(ZAIM_HEADER[colOf('メモの列')], 'メモ');
+  assert.equal(ZAIM_HEADER[colOf('お店の列')], 'お店');
+  assert.equal(ZAIM_HEADER[colOf('支払元の列')], '支払元');
+  assert.equal(ZAIM_HEADER[colOf('入金先の列')], '入金先');
+  assert.equal(ZAIM_HEADER[colOf('品目の列')], '品目');
+  assert.equal(ZAIM_HEADER[colOf('支出の金額の列')], '支出金額');
+
+  // Zaim の画面と同じ順序で並んでいる = 上から順に 1,2,3… と入れるだけになる
+  const columnValues = settings
+    .filter((s) => /列目$/.test(s.value))
+    .map((s) => Number(s.value.replace(/\D/g, '')));
+  assert.deepEqual(columnValues, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+  // 使わない列は「存在しない」
+  assert.equal(valueOf('収入の金額の列'), '存在しない');
+  assert.equal(valueOf('振替の金額の列'), '存在しない');
+  assert.equal(valueOf('区切り文字'), 'カンマ');
 });

@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import csv
+import re
 import sys
 import zipfile
 from collections import defaultdict
@@ -48,7 +49,12 @@ JST = timezone(timedelta(hours=9))          # 日本時間
 ORDER_CSV_REL = Path("Your Orders") / "Your Amazon Orders" / "Order History.csv"
 REFUND_CSV_REL = Path("Your Orders") / "Your Returns & Refunds" / "Refund Details.csv"
 
-ZAIM_HEADER = ["日付", "カテゴリ", "カテゴリの内訳", "お店", "支払い元", "品目", "支出金額"]
+# Zaim の「一般的な CSV ファイルをアップロードする」設定画面に並ぶ項目と同じ順序・
+# 同じ個数。取込設定を上から順に 1,2,3… と入れるだけで済み、列番号の数え間違いを防ぐ。
+ZAIM_HEADER = ["日付", "カテゴリ", "カテゴリの内訳", "メモ", "お店",
+               "支払元", "入金先", "品目", "支出金額"]
+COL_AMOUNT = 8                              # ZAIM_HEADER 内の支出金額の位置(0始まり)
+ITEM_MAX_LEN = 24                           # 品目の最大長(全文はメモへ)
 NON_PURCHASE_STATUSES = {"Cancelled", "Canceled"}
 ITEM_JOIN = " / "                           # 複数商品をまとめる際の区切り
 
@@ -121,6 +127,56 @@ def load_refunds(path: Path) -> dict[str, int]:
     return dict(refunds)
 
 
+def shorten_name(raw: str, max_len: int = ITEM_MAX_LEN) -> str:
+    """商品名を家計簿で読める見出しに整える(宣伝ブロックを落として詰める)。"""
+    # 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
+    # 閉じ括弧で止めると "【A[B]C】" で "C】" が残る
+    s = re.sub(r"【[^】]*】|［[^］]*］|\[[^\]]*\]", " ", raw or "")
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        s = (raw or "").strip()
+    # Python の str はコードポイント単位なので JS の Array.from と同じ数え方になる
+    # (JS の slice はコード単位で、絵文字を分断して壊す)
+    return s if len(s) <= max_len else s[:max_len].strip() + "…"
+
+
+def item_label(names: list[str]) -> str:
+    """商品名リスト → 品目欄の1行。同名は ×N、複数種類は「先頭 ほかN点」。"""
+    counts: dict[str, int] = {}
+    for n in names:
+        n = (n or "").strip()
+        counts[n] = counts.get(n, 0) + 1
+    kinds = list(counts.items())
+    if not kinds:
+        return ""
+    first_name, first_count = kinds[0]
+    head = shorten_name(first_name) + (f"×{first_count}" if first_count > 1 else "")
+    return head if len(kinds) == 1 else f"{head} ほか{len(kinds) - 1}点"
+
+
+def build_memo(names: list[str], oid: str = "", refund: int = 0,
+               gift: bool = False, shipment_count: int = 1) -> str:
+    """メモ欄。品目を畳んでいるぶん、全商品名と注記をここに残す。"""
+    parts = [combine_names(names)]
+    # 返金とギフト券併用は同時に起こり得る。elif にすると返金がある注文だけ
+    # ギフト券の注記が消え、JS 側の出力と食い違う(実請求額との差に気付けなくなる)
+    if refund:
+        parts.append(f"返金{refund}円を差引済み")
+    if gift:
+        parts.append("ギフト券併用のため実請求額と差がある可能性あり")
+    if shipment_count > 1:
+        parts.append(f"{shipment_count}回に分けて出荷(カード明細では分割計上のことあり)")
+    if oid:
+        parts.append(f"注文 {oid}")
+    return " / ".join(p for p in parts if p)
+
+
+def zaim_row(date: str, memo: str, item: str, amount: int,
+             category: str, subcategory: str, store: str, source: str) -> list[str]:
+    """出力1行を ZAIM_HEADER の並びで組み立てる(列順の唯一の定義点)。"""
+    return [date, category, subcategory, memo, store, source, "", item, str(amount)]
+
+
 def combine_names(names: list[str]) -> str:
     """商品名リストを重複統合 (同名は ×N) して連結。出現順を保持。"""
     counts: dict[str, int] = {}
@@ -170,12 +226,16 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
 
     if not aggregate:
         # 旧挙動: 明細 1 行 = 1 エントリ (返金は無視)
-        out = [[
-            parse_date(r.get("Ship Date") or r.get("Order Date", ""), jst),
-            category, subcategory, store, source,
-            (r.get("Product Name") or "").strip(),
-            str(parse_amount(r.get("Total Amount", ""))),
-        ] for r in picked]
+        out = [
+            zaim_row(
+                parse_date(r.get("Ship Date") or r.get("Order Date", ""), jst),
+                build_memo([(r.get("Product Name") or "").strip()], oid=r.get("Order ID", "")),
+                shorten_name((r.get("Product Name") or "").strip()),
+                parse_amount(r.get("Total Amount", "")),
+                category, subcategory, store, source,
+            )
+            for r in picked
+        ]
         out.sort(key=lambda x: x[0])
         return [r for r in out if in_range(r[0])], notes
 
@@ -185,9 +245,17 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         oid = r.get("Order ID", "")
         ship = parse_date(r.get("Ship Date") or r.get("Order Date", ""), jst)
         key = (oid, ship)
-        g = groups.setdefault(key, {"date": ship, "amount": 0, "names": []})
+        g = groups.setdefault(
+            key,
+            {"date": ship, "amount": 0, "names": [], "gift": False, "shipment_count": 1},
+        )
         g["amount"] += parse_amount(r.get("Total Amount", "")) or 0
         g["names"].append(r.get("Product Name") or "")
+        if "Gift" in (r.get("Payment Method Type") or ""):
+            g["gift"] = True
+        # 1明細が複数回に分けて出荷されると Ship Date が " and " で連結される
+        ship_values = split_date_values(r.get("Ship Date") or r.get("Order Date", ""))
+        g["shipment_count"] = max(g["shipment_count"], len(ship_values))
 
     # 3) 返金を該当注文の(最も遅い発送日の)グループから差し引く
     order_keys: dict[str, list] = defaultdict(list)
@@ -210,8 +278,14 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         if amt <= 0:
             notes.append(f"除外(実質0円/全額返金): {g['date']} {combine_names(g['names'])[:30]}")
             continue
-        out.append([g["date"], category, subcategory, store, source,
-                    combine_names(g["names"]), str(amt)])
+        out.append(zaim_row(
+            g["date"],
+            build_memo(g["names"], oid=key[0], refund=g.get("refund", 0),
+                       gift=g.get("gift", False),
+                       shipment_count=g.get("shipment_count", 1)),
+            item_label(g["names"]),
+            amt, category, subcategory, store, source,
+        ))
     out.sort(key=lambda x: x[0])
     return [r for r in out if in_range(r[0])], notes
 
@@ -273,7 +347,7 @@ def main() -> None:
         w.writerow(ZAIM_HEADER)
         w.writerows(out_rows)
 
-    total = sum(int(r[6]) for r in out_rows)
+    total = sum(int(r[COL_AMOUNT]) for r in out_rows)
     mode = "出荷単位で合算" if args.aggregate else "明細1行=1エントリ"
     tzlabel = "日付=発送日/JST" if args.tz == "jst" else "日付=発送日/UTC"
     print(f"[OK] 出力: {out_path}  ({mode}, {tzlabel}, 支払い元={args.source or '空欄'})")

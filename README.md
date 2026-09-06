@@ -1,7 +1,8 @@
 # Amazon → Zaim インポートCSV 変換
 
 Amazon の注文履歴 ZIP から、特定のクレジットカードで購入した注文だけを抽出し、
-Zaim インポート用 CSV(`日付,カテゴリ,カテゴリの内訳,お店,支払い元,品目,支出金額`)を生成する。
+Zaim インポート用 CSV(`日付,カテゴリ,カテゴリの内訳,メモ,お店,支払元,入金先,品目,支出金額`)を生成する。
+列の並びは **Zaim の取込設定画面と同じ順番**にしてあるので、設定は上から順に 1〜9 を選ぶだけ。
 
 **Web アプリ実装済み**(`web/` ― クライアント完結・サーバ不要)。
 スマホ(iPhone 等)のブラウザで ZIP を投入すると、その場で Zaim 取込用 CSV を生成できる。
@@ -23,6 +24,8 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 5. ギフト券併用の警告が出たら、カード明細の**実請求額を入力して補正**する
    (ギフト券の充当額は注文履歴に含まれないため、そのままだと総額で出る)
 6. プレビューを確認して「CSVをダウンロード」(iPhone は共有シート経由の保存も可)
+7. 画面の **STEP 4「Zaimに取り込む」** に出る設定どおりに Zaim 側を設定して取り込む
+   (列の並びを Zaim の設定画面と揃えてあるので、上から順に 1〜9 を選ぶだけ)
 
 処理はすべてブラウザ内で完結し、注文データ・氏名・住所は外部送信されない。
 
@@ -54,7 +57,7 @@ node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュ�
 │   ├── make_dummy_data.js   #   PIIなしダミー Your Orders.zip 生成
 │   └── verify_dummy.js      #   ダミーデータでのJS/Python等価性検証
 ├── reference/               # 参照用データ
-│   ├── zaim_import_base_7columns.csv  # 出力ヘッダの正
+│   ├── zaim_import_base_9columns.csv  # 出力ヘッダの正(Zaimの取込設定と同じ並び)
 │   └── FileDescriptions.csv           # Amazonの各ファイル説明
 ├── web/                     # ★Webアプリ本体(静的・ビルド不要)
 │   ├── index.html           #   単一画面
@@ -93,7 +96,7 @@ python scripts/amazon_to_zaim.py --card 5171,7474 --from 2026-07-19 --to 2026-07
 # ZIPから解凍込みで実行(data/ に Your Orders.zip がある前提)
 python scripts/amazon_to_zaim.py --zip "Your Orders.zip"
 
-# タイムゾーンをUTCに / 支払い元を変更
+# タイムゾーンをUTCに / 支払元を変更
 python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
 ```
 
@@ -107,6 +110,8 @@ python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
 - **複数カードを合算**: カード更新で下4桁が変わっても取りこぼさない
 - **期間で絞り込み**: 月単位でも1日単位でも切り出して Zaim へ取り込む
 - **ギフト券併用は手動補正**: 実請求額を入力するとその額で出力する
+- **Zaimの取込設定と同じ列順**: 設定画面で上から順に 1〜9 を選ぶだけ(列番号の取り違え防止)
+- **品目は読める長さに、全文はメモへ**: 品目は24文字に畳み、メモに全商品名・注記・注文IDを残す
 
 詳細・根拠・検証値は `docs/IMPLEMENTATION.md` を参照。
 
