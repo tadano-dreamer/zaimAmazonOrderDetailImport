@@ -40,16 +40,19 @@ check(
   '全額返金の除外メモあり'
 );
 
-const golden = fs
-  .readFileSync(GOLDEN_CSV, 'utf8')
-  .replace(/^﻿/, '')
-  .split(/\r\n|\n/)
-  .filter(Boolean);
-const js = core
-  .generateCsv(rows)
-  .replace(/^﻿/, '')
-  .split(/\r\n|\n/)
-  .filter(Boolean);
+/**
+ * CSV を行の配列に正規化する。BOM と改行コードは比較対象にしない
+ * ― git が環境によって CRLF/LF を変換するため、バイト比較は
+ * Windows で通っても Linux(CI)で落ちる。
+ */
+const toLines = (text) =>
+  text
+    .replace(/^﻿/, '')
+    .split(/\r\n|\n/)
+    .filter(Boolean);
+
+const golden = toLines(fs.readFileSync(GOLDEN_CSV, 'utf8'));
+const js = toLines(core.generateCsv(rows));
 check(js.length === golden.length, `行数一致 → JS=${js.length} golden=${golden.length}`);
 for (let i = 0; i < Math.max(js.length, golden.length); i++) {
   if (js[i] !== golden[i]) {
@@ -69,10 +72,19 @@ const sNew = core.summarize(newCard.rows);
 check(sNew.count === 3 && sNew.total === 14670, `7474 単体 → ${sNew.count}件 / ${sNew.total}円`);
 // 7474 側にはギフト券併用かつ部分返金の注文が入っている。メモの注記は
 // 片方を elif にすると静かに消えるので、Python 出力とバイト単位で突き合わせる。
+const js7474 = toLines(core.generateCsv(newCard.rows));
+const golden7474 = toLines(fs.readFileSync(GOLDEN_CSV_7474, 'utf8'));
 check(
-  core.generateCsv(newCard.rows) === fs.readFileSync(GOLDEN_CSV_7474, 'utf8'),
-  '7474: JS 出力が Python 参照実装とバイト単位で一致(メモの注記含む)'
+  js7474.length === golden7474.length && js7474.every((l, i) => l === golden7474[i]),
+  '7474: JS 出力が Python 参照実装と一致(メモの注記含む)'
 );
+for (let i = 0; i < Math.max(js7474.length, golden7474.length); i++) {
+  if (js7474[i] !== golden7474[i]) {
+    console.log(`     行 ${i + 1}:`);
+    console.log(`       JS    : ${js7474[i]}`);
+    console.log(`       golden: ${golden7474[i]}`);
+  }
+}
 const giftRefundRow = newCard.rows.find((r) => r[core.COL.date] === '2026-07-24');
 check(
   giftRefundRow[core.COL.memo].includes('返金300円を差引済み') &&
