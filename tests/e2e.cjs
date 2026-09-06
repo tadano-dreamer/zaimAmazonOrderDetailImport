@@ -613,6 +613,23 @@ async function main() {
       return dr.left >= card.left - 0.5 && dr.right <= card.right + 0.5;
     });
     check(fits, `${engineName} 320px幅で日付欄がカード内に収まる`);
+    // ネイティブの日付ウィジェットが指定幅を無視して隣に重なることがある(実機 iOS で発生)
+    const geo = await page.evaluate(() => {
+      const f = document.getElementById('period-from').getBoundingClientRect();
+      const t = document.getElementById('period-to').getBoundingClientRect();
+      const fl = document.getElementById('period-from').closest('.date-field').getBoundingClientRect();
+      return {
+        gap: Math.round(t.left - f.right),
+        overflowsOwnCell: Math.round(f.right - fl.right),
+        widthDiff: Math.round(Math.abs(f.width - t.width)),
+      };
+    });
+    check(geo.gap >= 0, `${engineName} 開始日と終了日が重ならない(間隔 ${geo.gap}px)`);
+    check(
+      geo.overflowsOwnCell <= 0,
+      `${engineName} 日付入力が自分の枠からはみ出さない(${geo.overflowsOwnCell}px)`
+    );
+    check(geo.widthDiff <= 1, `${engineName} 開始日と終了日が同じ幅(差 ${geo.widthDiff}px)`);
     if (engineName === 'WebKit') {
       await page.screenshot({ path: path.join(SHOT_DIR, `se-320-dummy.png`), fullPage: true });
     }

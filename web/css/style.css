@@ -185,30 +185,50 @@ select:focus, input[type="text"]:focus, .btn:focus-visible {
 .card-item:has(input:focus-visible) { outline: 3px solid rgba(14, 159, 91, 0.35); }
 
 /* ---------- 期間指定(プリセット + 日付) ---------- */
-.date-range { display: flex; align-items: flex-end; gap: 8px; margin-top: 8px; }
+.date-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
 .date-field {
-  flex: 1 1 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 4px;
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-sub);
 }
 .date-range input[type="date"] {
+  /* iOS Safari / Chromium のネイティブ日付ウィジェットは指定幅を無視して
+     はみ出す(実機で隣の要素に重なった)。appearance を外して枠内に収める */
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
   width: 100%;
-  min-width: 0; /* Chromium のネイティブ日付入力は既定の下限幅が広い */
+  min-width: 0;
   min-height: var(--tap);
+  margin: 0;
+  font-family: inherit;
   font-size: 0.95rem;
-  padding: 6px 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 1.2;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fff;
   color: var(--text);
 }
+/* iOS は日付の中身を独立したボックスで描くので、そちらの余白も潰しておく */
+.date-range input[type="date"]::-webkit-date-and-time-value {
+  text-align: center;
+  margin: 0;
+}
+.date-range input[type="date"]::-webkit-calendar-picker-indicator { margin-left: 4px; }
 .date-range input[type="date"]:focus { outline: 3px solid rgba(14, 159, 91, 0.35); outline-offset: 1px; }
-.date-sep { padding-bottom: 14px; color: var(--text-sub); }
 
 /* ---------- 詳細設定(既定では畳んでおく) ---------- */
 #advanced-settings > .field:first-of-type { margin-top: 10px; }

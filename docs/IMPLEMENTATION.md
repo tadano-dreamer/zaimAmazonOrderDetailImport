@@ -384,6 +384,13 @@ gh repo create <name> --public --source=. --push
   `main { grid-template-columns: minmax(0, 1fr) }` + `.card { min-width: 0 }` で止める。
   なお溢れの判定に `window.innerWidth` を使うと、モバイルエミュレーション時に
   実幅より大きくなって**溢れを隠す**。`document.documentElement.clientWidth` と比べること。
+- **落とし穴5(実機で発覚)**: `input[type=date]` はネイティブウィジェットのため、
+  `width:100%` を指定しても **iOS Safari では実寸がはみ出して隣の要素に重なる**
+  (実機で「開始日」の枠から溢れて区切りの「〜」に被った)。
+  `-webkit-appearance: none; appearance: none;` を当てて枠内に収める。
+  区切り文字は廃止し、2カラムグリッド + ラベル(開始日/終了日)にした
+  ─ 要素が1つ減れば重なりようがない。E2E で「2つの日付欄が重ならない・
+  自分の枠からはみ出さない・同じ幅」を両エンジンで検査している。
 
 ### 9-10. 追加された検証値
 
