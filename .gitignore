@@ -16,3 +16,9 @@ tests/node_modules/
 tests/screenshots/
 tests/uat-shots/
 tests/package-lock.json
+
+# 共有用に置いたスクリーンショット(Zaim の画面など)。
+# testdata/ は追跡対象なので、置きっぱなしだと `git add -A` で公開リポジトリに入ってしまう。
+# 残したいものは docs/screenshots/ へ明示的に移すこと。
+testdata/**/*.png
+testdata/**/*.jpg
