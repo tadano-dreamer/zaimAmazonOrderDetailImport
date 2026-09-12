@@ -65,12 +65,23 @@
   /**
    * カテゴリの内訳の選択肢。自由入力だと打ち間違いがそのまま新しい内訳として
    * Zaim 側に増えるため、選択肢に閉じる(増やすときはここを直す)。
-   * tag は出力ファイル名に入れる ASCII 表記(どちらへ取り込んだかを控えるため)。
+   *
+   * - `tag`    … 出力ファイル名に入れる ASCII 表記(どちらへ取り込んだかを控えるため)
+   * - `source` … 対応する支払元。**内訳と支払元は1:1で決まる**ので選ばせない。
+   *              名前は Zaim のエクスポート(2026-09-06)で実在を確認済み
+   *              (ゆうEPOS 1,182件 / ともEPOS 948件)。**ここが1文字でも違うと
+   *              Zaim 側に新しい口座が増える**ので、実在する綴りから変えないこと。
    */
   const SUBCATEGORY_CHOICES = [
-    { value: 'ゆうすけAmazon', tag: 'yusuke' },
-    { value: 'ともかAmazon', tag: 'tomoka' },
+    { value: 'ゆうすけAmazon', tag: 'yusuke', source: 'ゆうEPOS' },
+    { value: 'ともかAmazon', tag: 'tomoka', source: 'ともEPOS' },
   ];
+
+  /** 内訳に対応する支払元。選択肢にない内訳なら null。 */
+  function sourceForSubcategory(subcategory) {
+    const hit = SUBCATEGORY_CHOICES.find((c) => c.value === subcategory);
+    return hit ? hit.source : null;
+  }
 
   const NON_PURCHASE_STATUSES = new Set(['Cancelled', 'Canceled']);
   const ITEM_JOIN = ' / ';
@@ -84,7 +95,8 @@
     category: '生活費',
     subcategory: SUBCATEGORY_CHOICES[0].value,
     store: 'Amazon',
-    source: 'ゆうEPOS',
+    // null = 未指定。内訳に対応する支払元を自動で使う(空文字は「支払元を空欄にする」)
+    source: null,
     aggregate: true,
     splitByItem: false, // true で「商品ごとに1行」(Zaim では別レコードになる)
     memo: 'notes', // MEMO_MODES のいずれか
@@ -467,6 +479,9 @@
    */
   function convert(orderRows, refundRows, options) {
     const opt = Object.assign({}, DEFAULT_OPTIONS, options || {});
+    // 支払元は内訳から決まる(ともかAmazon → ともEPOS)。明示指定があればそちらを優先し、
+    // 空文字は「空欄にしたい」という指定として尊重する。
+    if (opt.source == null) opt.source = sourceForSubcategory(opt.subcategory) || '';
     const cards = resolveCards(opt);
     const overrides = opt.amountOverrides || {};
     const refunds = Array.isArray(refundRows) ? loadRefunds(refundRows) : refundRows || {};
@@ -827,6 +842,7 @@
     splitDateValues,
     parseCsv,
     combineNames,
+    sourceForSubcategory,
     truncate,
     shortenName,
     itemLabel,

@@ -24,7 +24,7 @@ Zaim インポート用 CSV
     python amazon_to_zaim.py --no-aggregate        # 合算せず明細1行=1エントリ(旧挙動)
     python amazon_to_zaim.py --split-items         # 同じ支払いでも商品ごとに1行
     python amazon_to_zaim.py --memo full           # メモに全商品名も入れる(既定は注記のみ)
-    python amazon_to_zaim.py --subcategory ともかAmazon   # カテゴリの内訳を切り替える
+    python amazon_to_zaim.py --subcategory ともかAmazon   # 内訳を切替 (支払元も ともEPOS に)
 
 注意: カード下4桁1つで絞ると、カード更新・再発行で番号が変わった時点以降が
       丸ごと落ちる。--card は必ず実データの利用期間を見て指定すること。
@@ -44,12 +44,18 @@ from pathlib import Path
 # --- 既定値 ---------------------------------------------------------------
 DEFAULT_CARD = "5171"                       # 抽出するカード下4桁
 DEFAULT_CATEGORY = "生活費"                  # Zaim カテゴリ (固定)
-# Zaim カテゴリの内訳。自由入力だと打ち間違いがそのまま新しい内訳として Zaim 側に
-# 増えるため、選択肢に閉じる (増やすときはここを直す)。core.js と同じ並び。
-SUBCATEGORY_CHOICES = ["ゆうすけAmazon", "ともかAmazon"]
+# Zaim カテゴリの内訳と、それに対応する支払元。自由入力だと打ち間違いがそのまま
+# 新しい内訳・口座として Zaim 側に増えるため、選択肢に閉じる (増やすときはここを直す)。
+# core.js の SUBCATEGORY_CHOICES と同じ並び・同じ対応。
+# 口座名は Zaim のエクスポート (2026-09-06) で実在を確認済み
+# (ゆうEPOS 1,182件 / ともEPOS 948件)。1文字でも違うと Zaim 側に新しい口座が増える。
+SUBCATEGORY_SOURCES = {
+    "ゆうすけAmazon": "ゆうEPOS",
+    "ともかAmazon": "ともEPOS",
+}
+SUBCATEGORY_CHOICES = list(SUBCATEGORY_SOURCES)
 DEFAULT_SUBCATEGORY = SUBCATEGORY_CHOICES[0]
 DEFAULT_STORE = "Amazon"                    # Zaim お店
-DEFAULT_SOURCE = "ゆうEPOS"                  # Zaim 支払い元 (EPOS = Visa 5171)
 DEFAULT_TZ = "jst"                          # 計上日のタイムゾーン (jst / utc)
 DEFAULT_MEMO_MODE = "notes"                 # メモ欄の中身 (notes / none / full)
 
@@ -411,7 +417,9 @@ def main() -> None:
                     help="Zaim カテゴリの内訳 (選択肢に閉じる: 打ち間違いをそのまま"
                          "新しい内訳として増やさないため)")
     ap.add_argument("--store", default=DEFAULT_STORE)
-    ap.add_argument("--source", default=DEFAULT_SOURCE, help="Zaim 支払い元")
+    ap.add_argument("--source", default=None,
+                    help="Zaim 支払い元 (既定: 内訳に対応する口座。"
+                         "ゆうすけAmazon→ゆうEPOS / ともかAmazon→ともEPOS)")
     ap.add_argument("--tz", default=DEFAULT_TZ, choices=["jst", "utc"],
                     help="計上日のタイムゾーン (既定 jst=日本時間, utc=変換なし)")
     ap.add_argument("--no-aggregate", dest="aggregate", action="store_false",
@@ -439,9 +447,13 @@ def main() -> None:
         last_day = calendar.monthrange(year, month)[1]
         date_from, date_to = f"{args.month}-01", f"{args.month}-{last_day:02d}"
 
+    # 支払元は内訳から決まる。明示指定があればそちらを優先し、
+    # 空文字は「空欄にしたい」という指定として尊重する。
+    source = args.source if args.source is not None else SUBCATEGORY_SOURCES[args.subcategory]
+
     out_rows, notes = convert(
         rows, refunds, cards, args.category, args.subcategory,
-        args.store, args.source, args.aggregate, jst=(args.tz == "jst"),
+        args.store, source, args.aggregate, jst=(args.tz == "jst"),
         date_from=date_from, date_to=date_to,
         split_by_item=args.split_by_item, memo_mode=args.memo,
     )
@@ -463,7 +475,8 @@ def main() -> None:
     else:
         mode = "出荷単位で合算"
     tzlabel = "日付=発送日/JST" if args.tz == "jst" else "日付=発送日/UTC"
-    print(f"[OK] 出力: {out_path}  ({mode}, {tzlabel}, 支払い元={args.source or '空欄'})")
+    print(f"[OK] 出力: {out_path}  ({mode}, {tzlabel}, "
+          f"内訳={args.subcategory}, 支払い元={source or '空欄'})")
     print(f"[OK] カード {'/'.join(cards)}: {len(out_rows)} エントリ / 合計 {total:,} 円")
     if out_rows:
         print(f"[OK] 期間: {out_rows[0][0]} 〜 {out_rows[-1][0]}")

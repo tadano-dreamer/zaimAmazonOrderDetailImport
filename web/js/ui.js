@@ -515,13 +515,19 @@
         input.name = 'subcategory';
         input.value = choice.value;
         input.checked = i === 0;
-        input.addEventListener('change', render);
+        input.addEventListener('change', () => {
+          // 支払元は内訳から一意に決まる(ともかAmazon → ともEPOS)。選ばせずに追随させる。
+          el.source.value = choice.source;
+          render();
+        });
         const span = document.createElement('span');
         span.textContent = choice.value;
         label.append(input, span);
         return label;
       })
     );
+    // HTML 側の初期値と core の対応表がずれないよう、起動時も core から入れる
+    el.source.value = Core.SUBCATEGORY_CHOICES[0].source;
   }
 
   /** 件数チップは「選択中の件数」。一部だけ外しているときだけ全体件数も出す。 */

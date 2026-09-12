@@ -531,12 +531,25 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     tomokaCsv.slice(1).every((l) => l.split(',')[2] === 'ともかAmazon'),
     `内訳を切り替えると3列目が変わる → ${tomokaCsv[1].split(',')[2]}`
   );
+  // 支払元(6列目)は内訳に連動する。選ばせずに追随させる
+  check(
+    tomokaCsv.slice(1).every((l) => l.split(',')[5] === 'ともEPOS'),
+    `内訳に合わせて支払元も切り替わる → ${tomokaCsv[1].split(',')[5]}`
+  );
+  check(
+    (await page.inputValue('#opt-source')) === 'ともEPOS',
+    `詳細設定の支払元欄も追随する → ${await page.inputValue('#opt-source')}`
+  );
   check(
     tomokaCsv.length === yusukeCsv.length &&
       (await page.textContent('#sum-total')) === '33,718円',
     '内訳を切り替えても件数・金額は変わらない'
   );
   await page.check('input[name="subcategory"][value="ゆうすけAmazon"]');
+  check(
+    (await page.inputValue('#opt-source')) === 'ゆうEPOS',
+    `内訳を戻すと支払元も戻る → ${await page.inputValue('#opt-source')}`
+  );
 
   // --- シナリオ L: 商品ごとに1行(1支払い=複数明細の代替)--------------------
   await openAdvanced(page, true);

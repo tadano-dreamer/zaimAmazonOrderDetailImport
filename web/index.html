@@ -65,8 +65,9 @@
         <legend>カテゴリの内訳(取り込み先)</legend>
         <div class="radio-row" role="radiogroup" id="subcategory-choices"></div>
         <p class="hint">
-          Zaim の「カテゴリの内訳」に入る値です。出力ファイル名にも入るので、
-          どちらに取り込んだか後から分かります。
+          Zaim の「カテゴリの内訳」に入る値です。<strong>支払元も一緒に切り替わります</strong>
+          (ゆうすけAmazon → ゆうEPOS / ともかAmazon → ともEPOS)。
+          出力ファイル名にも入るので、どちらに取り込んだか後から分かります。
         </p>
       </fieldset>
 
@@ -120,6 +121,7 @@
             <label>お店<input type="text" id="opt-store" value="Amazon"></label>
             <label>支払元<input type="text" id="opt-source" value="ゆうEPOS"></label>
           </div>
+          <p class="hint">支払元は上で選んだ内訳に合わせて自動で入ります(手で直すこともできます)。</p>
         </fieldset>
       </details>
     </section>

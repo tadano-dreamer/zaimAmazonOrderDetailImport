@@ -1181,3 +1181,57 @@ test('convert: subcategory を切り替えると3列目が変わる', () => {
     assert.ok(rows.every((r) => r[COL.subcategory] === choice.value));
   }
 });
+
+// ------------------------------------------- 内訳と支払元の連動(2026-09-12 追加)
+// 内訳と支払元は1:1で決まる(ともかAmazon の買い物は ともEPOS 払い)。選ばせない。
+const { sourceForSubcategory } = require('./core.js');
+
+test('sourceForSubcategory: 内訳に対応する支払元を返す(未知なら null)', () => {
+  assert.equal(sourceForSubcategory('ゆうすけAmazon'), 'ゆうEPOS');
+  assert.equal(sourceForSubcategory('ともかAmazon'), 'ともEPOS');
+  assert.equal(sourceForSubcategory('存在しない内訳'), null);
+  assert.equal(sourceForSubcategory(''), null);
+});
+
+test('SUBCATEGORY_CHOICES: 支払元は Zaim に実在する口座名(綴りを変えない)', () => {
+  // 1文字でも違うと Zaim 側に新しい口座が増える。実エクスポートで確認した綴り。
+  assert.deepEqual(
+    SUBCATEGORY_CHOICES.map((c) => c.source),
+    ['ゆうEPOS', 'ともEPOS']
+  );
+});
+
+test('convert: source 未指定なら内訳に対応する支払元が入る', () => {
+  const { COL } = require('./core.js');
+  const base = { ...DEFAULTS };
+  delete base.source;
+
+  const yusuke = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, base);
+  assert.ok(yusuke.rows.every((r) => r[COL.source] === 'ゆうEPOS'));
+
+  const tomoka = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, {
+    ...base,
+    subcategory: 'ともかAmazon',
+  });
+  assert.ok(
+    tomoka.rows.every((r) => r[COL.source] === 'ともEPOS'),
+    tomoka.rows.map((r) => r[COL.source]).join(',')
+  );
+  // 金額は変わらない
+  assert.equal(
+    tomoka.rows.reduce((s, r) => s + Number(r[COL.amount]), 0),
+    yusuke.rows.reduce((s, r) => s + Number(r[COL.amount]), 0)
+  );
+});
+
+test('convert: source を明示したらそちらが優先される(空文字は空欄の指定)', () => {
+  const { COL } = require('./core.js');
+  const base = { ...DEFAULTS, subcategory: 'ともかAmazon' };
+
+  const explicit = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...base, source: '楽天カード' });
+  assert.ok(explicit.rows.every((r) => r[COL.source] === '楽天カード'));
+
+  // 空文字は「自動で埋める」ではなく「空欄にする」
+  const blank = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...base, source: '' });
+  assert.ok(blank.rows.every((r) => r[COL.source] === ''));
+});

@@ -22,6 +22,7 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 4. **出力する期間を選ぶ**。プルダウンで「全期間 / 各月」を選ぶと開始日・終了日が自動で入り、
    日付を直接変えれば **1日単位**で切り出せる(取り込み済みの翌日から、など)。
 5. **カテゴリの内訳(取り込み先)を選ぶ** ― `ゆうすけAmazon` / `ともかAmazon` の2択。
+   **支払元も一緒に切り替わる**(ゆうすけAmazon → `ゆうEPOS` / ともかAmazon → `ともEPOS`)。
    選んだ内訳は出力ファイル名にも入るので、どちらに取り込んだか後から分かる。
 6. ギフト券併用の警告が出たら、カード明細の**実請求額を入力して補正**する
    (ギフト券の充当額は注文履歴に含まれないため、そのままだと総額で出る)
@@ -36,7 +37,7 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 ### テスト
 
 ```bash
-node --test web/js/core.test.js        # 単体テスト(94件)
+node --test web/js/core.test.js        # 単体テスト(98件)
 node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
 node scripts/verify_parity_fuzz.js     # JS↔Python 同値性(ランダム生成データ・要python)
@@ -60,6 +61,7 @@ node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュ�
 │   ├── amazon_to_zaim.py    #   参照実装(oracle): Amazon履歴 → Zaim CSV 変換 CLI
 │   ├── verify_equivalence.js#   JS出力と実データゴールデンCSVの等価性検証
 │   ├── make_dummy_data.js   #   PIIなしダミー Your Orders.zip 生成
+│   ├── make_zaim_probe.js   #   実機で項目の文字数上限を測る探り用CSV生成
 │   ├── verify_dummy.js      #   ダミーデータでのJS/Python等価性検証
 │   └── verify_parity_fuzz.js#   ランダム生成データでのJS/Python同値性検証
 ├── reference/               # 参照用データ
@@ -102,10 +104,10 @@ python scripts/amazon_to_zaim.py --card 5171,7474 --from 2026-07-19 --to 2026-07
 # ZIPから解凍込みで実行(data/ に Your Orders.zip がある前提)
 python scripts/amazon_to_zaim.py --zip "Your Orders.zip"
 
-# タイムゾーンをUTCに / 支払元を変更
+# タイムゾーンをUTCに / 支払元を明示指定(既定は内訳から決まる)
 python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
 
-# カテゴリの内訳を切り替える(選択肢に閉じてある)
+# カテゴリの内訳を切り替える(支払元も ともEPOS に自動で切り替わる)
 python scripts/amazon_to_zaim.py --subcategory ともかAmazon
 
 # 同じ支払いでも商品ごとに1行にする(Zaim上は別レコード・合計は変わらない)
@@ -126,6 +128,8 @@ python scripts/amazon_to_zaim.py --memo full
 - **複数カードを合算**: カード更新で下4桁が変わっても取りこぼさない
 - **期間で絞り込み**: 月単位でも1日単位でも切り出して Zaim へ取り込む
 - **ギフト券併用は手動補正**: 実請求額を入力するとその額で出力する
+- **内訳と支払元は連動**: `ゆうすけAmazon`→`ゆうEPOS` / `ともかAmazon`→`ともEPOS`。
+  1:1で決まるので支払元は選ばせない(口座名は Zaim の実データで実在を確認済み)
 - **Zaimの取込設定と同じ列順**: 設定画面で上から順に 1〜9 を選ぶだけ(列番号の取り違え防止)
 - **品目に買ったものを並べる**: 1商品24文字に畳み、品目欄の予算(60文字)まで商品名を並べる
   (入りきらない分だけ「ほかN点」)
