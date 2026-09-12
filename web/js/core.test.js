@@ -133,7 +133,7 @@ const FIXTURE_REFUNDS = [{ 'Order ID': 'B', 'Refund Amount': '200' }];
 const DEFAULTS = {
   card: '5171',
   category: '生活費',
-  subcategory: 'ゆうすけインポート',
+  subcategory: 'ゆうすけAmazon',
   store: 'Amazon',
   source: 'ゆうEPOS',
   aggregate: true,
@@ -153,9 +153,10 @@ test('convert: 同一注文・同一発送日は合算(477+1180=1657)', () => {
   const a = rows.find((r) => r[7].includes('紙コップ'));
   assert.ok(a);
   assert.equal(a[8], '1657');
-  // 品目は一覧で読める見出し、全商品名はメモへ
-  assert.equal(a[7], '紙コップ ほか1点');
-  assert.ok(a[3].startsWith('紙コップ / シート'));
+  // 品目には予算いっぱいまで商品名を並べる(「ほか1点」で中身が消えない)
+  assert.equal(a[7], '紙コップ / シート');
+  // 既定のメモは注記と注文IDだけ(商品名は品目欄が持つ)
+  assert.equal(a[3], '注文 A');
   assert.equal(a[0], '2026-06-30');
 });
 
@@ -256,7 +257,7 @@ test('convert: 固定値が Zaim の取込設定と同じ列位置に入る(9列
   for (const r of rows) {
     assert.equal(r.length, 9);
     assert.equal(r[COL.category], '生活費');
-    assert.equal(r[COL.subcategory], 'ゆうすけインポート');
+    assert.equal(r[COL.subcategory], 'ゆうすけAmazon');
     assert.equal(r[COL.store], 'Amazon');
     assert.equal(r[COL.source], 'ゆうEPOS');
     assert.equal(r[COL.receiver], ''); // 支出では使わないが列は空けておく
@@ -326,8 +327,8 @@ test('detectCards: Payment Method Type からカードを件数付きで検出',
 // ---------------------------------------------------------------- generateCsv
 test('generateCsv: ヘッダ + BOM + CRLF・カンマ含みフィールドをクオート', () => {
   const csv = generateCsv([
-    ['2026-06-30', '生活費', 'ゆうすけインポート', 'memo', 'Amazon', 'ゆうEPOS', '', 'A / B', '1657'],
-    ['2026-07-01', '生活費', 'ゆうすけインポート', 'memo', 'Amazon', 'ゆうEPOS', '', 'X, Y', '100'],
+    ['2026-06-30', '生活費', 'ゆうすけAmazon', 'memo', 'Amazon', 'ゆうEPOS', '', 'A / B', '1657'],
+    ['2026-07-01', '生活費', 'ゆうすけAmazon', 'memo', 'Amazon', 'ゆうEPOS', '', 'X, Y', '100'],
   ]);
   assert.ok(
     csv.startsWith('﻿日付,カテゴリ,カテゴリの内訳,メモ,お店,支払元,入金先,品目,支出金額\r\n')
@@ -817,20 +818,59 @@ test('shortenName: サロゲートペアを分断しない(CSVに � が混ざ�
 });
 
 // --------------------------------------------------------------- itemLabel
-test('itemLabel: 1種類はそのまま、同名は ×N、複数種類は「ほかN点」', () => {
+test('itemLabel: 1種類はそのまま、同名は ×N、複数種類は予算まで並べる', () => {
   assert.equal(itemLabel(['タオル']), 'タオル');
   assert.equal(itemLabel(['タオル', 'タオル']), 'タオル×2');
-  assert.equal(itemLabel(['タオル', '石けん']), 'タオル ほか1点');
-  assert.equal(itemLabel(['タオル', '石けん', '洗剤']), 'タオル ほか2点');
+  assert.equal(itemLabel(['タオル', '石けん']), 'タオル / 石けん');
+  assert.equal(itemLabel(['タオル', '石けん', '洗剤']), 'タオル / 石けん / 洗剤');
   assert.equal(itemLabel([]), '');
 });
 
+test('itemLabel: 予算を超える分だけ「ほかN点」に畳む(全体は予算内)', () => {
+  const { ITEM_FIELD_MAX } = require('./core.js');
+  const names = ['あ'.repeat(24), 'い'.repeat(24), 'う'.repeat(24), 'え'.repeat(24)];
+  const out = itemLabel(names);
+  assert.ok(Array.from(out).length <= ITEM_FIELD_MAX, `${out} (${Array.from(out).length}字)`);
+  assert.ok(out.includes('あ') && out.includes('い'), out); // 入るだけ並べる
+  assert.ok(/ ほか2点$/.test(out), out); // 残りは点数で示す
+});
+
+test('itemLabel: 「ほかN点」を足して予算を超えるなら、その1件は並べない', () => {
+  // tail を足す前に判定すると、ちょうど境界で予算を1〜5文字はみ出す
+  const { ITEM_FIELD_MAX } = require('./core.js');
+  for (let len = 10; len <= 30; len++) {
+    const names = ['あ'.repeat(len), 'い'.repeat(len), 'う'.repeat(len)];
+    const out = itemLabel(names);
+    assert.ok(
+      Array.from(out).length <= ITEM_FIELD_MAX,
+      `商品名${len}字: ${out} (${Array.from(out).length}字)`
+    );
+  }
+});
+
+test('itemLabel: 予算を指定できる(Zaim 側の上限が判明したら定数1つで追随する)', () => {
+  assert.equal(itemLabel(['タオル', '石けん'], 8), 'タオル ほか1点');
+  assert.ok(Array.from(itemLabel(['タオル', '石けん'], 8)).length <= 8);
+});
+
 // ------------------------------------------------------------------- メモ
-test('convert: メモに全商品名・注文IDが入る', () => {
+test('convert: 既定のメモは注記と注文IDだけ(商品名は品目欄が持つ)', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   const { COL } = require('./core.js');
   const a = rows.find((r) => r[COL.item].includes('紙コップ'));
+  assert.equal(a[COL.memo], '注文 A');
+});
+
+test('convert: memo=full なら全商品名も入る / memo=none なら空欄', () => {
+  const { COL } = require('./core.js');
+  const full = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'full' });
+  const a = full.rows.find((r) => r[COL.item].includes('紙コップ'));
   assert.equal(a[COL.memo], '紙コップ / シート / 注文 A');
+
+  const none = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'none' });
+  assert.ok(none.rows.every((r) => r[COL.memo] === ''), 'memo=none で空欄にならない行がある');
+  // 金額・件数は変わらない
+  assert.equal(none.rows.length, full.rows.length);
 });
 
 test('convert: メモに返金の注記が入る', () => {
@@ -916,4 +956,228 @@ test('zaimImportSettings: 列番号を ZAIM_HEADER から機械的に導く', ()
   assert.equal(valueOf('収入の金額の列'), '存在しない');
   assert.equal(valueOf('振替の金額の列'), '存在しない');
   assert.equal(valueOf('区切り文字'), 'カンマ');
+});
+
+// =====================================================================
+// 2026-09-12 追加: 実機で1件取り込んで判明した不具合への対応
+//   A) メモが100文字を超えると Zaim が赤字を出して保存できない
+//   B) 品目が「先頭 ほか1点」で、もう1品が何なのか分からない
+//   C) 1支払い=複数明細は CSV 取込では不可能 → 商品ごとに1行(返金は按分)
+//   D) カテゴリの内訳は2択に閉じる
+//   E) 出力する行を選べるよう、非合算モードでも meta.key を一意にする
+// =====================================================================
+
+const { truncate, FIELD_MAX_LEN, ITEM_FIELD_MAX, MEMO_MODES, SUBCATEGORY_CHOICES } =
+  require('./core.js');
+
+// 実機で赤字になった注文の再現(長い商品名2品 + 注文ID で 100文字を超える)
+const LONG_NAME_A =
+  'サンプル乳液 モイスチャライジング つめかえ用 豆乳イソフラボン配合 130mL 医薬部外品';
+const LONG_NAME_B =
+  'サンプル浄水器ポット型 交換用カートリッジ 6個入 高除去タイプ 日本仕様 正規品';
+const LONG_ORDERS = [
+  orderRow('Visa - 5171', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_A, '1,375', 'Closed'),
+  orderRow('Visa - 5171', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_B, '2,625', 'Closed'),
+  ...FIXTURE_ORDERS,
+];
+
+const charLen = (s) => Array.from(s).length;
+const sumAmount = (rows) => rows.reduce((s, r) => s + Number(r[8]), 0);
+
+// -------------------------------------------------------------------- truncate
+test('truncate: 戻り値は必ず maxLen 以下(… を足してはみ出さない)', () => {
+  assert.equal(truncate('あいうえお', 10), 'あいうえお');
+  assert.equal(truncate('あいうえお', 5), 'あいうえお'); // ちょうどは切らない
+  assert.equal(truncate('あいうえお', 4), 'あいう…'); // 4文字に収まる
+  assert.equal(truncate('あいうえお', 1), '…');
+  assert.equal(truncate('あいうえお', 0), '');
+  assert.equal(truncate('', 5), '');
+  assert.equal(truncate(null, 5), '');
+});
+
+test('truncate: サロゲートペアを分断しない(CSVに ? が混ざらない)', () => {
+  const out = truncate(`${'A'.repeat(9)}🎉BBB`, 10);
+  const roundTrip = new TextDecoder().decode(new TextEncoder().encode(out));
+  assert.equal(roundTrip, out);
+  assert.ok(!roundTrip.includes('�'), JSON.stringify(out));
+});
+
+// ------------------------------------------- §9-1 / §9-2 全行が上限に収まること
+test('convert: どのメモモードでも、全出力行のメモが100文字以下', () => {
+  const { COL } = require('./core.js');
+  for (const mode of MEMO_MODES) {
+    const { rows } = convert(LONG_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: mode });
+    assert.ok(rows.length > 0);
+    for (const r of rows) {
+      assert.ok(
+        charLen(r[COL.memo]) <= FIELD_MAX_LEN,
+        `memo=${mode} で ${charLen(r[COL.memo])}字: ${r[COL.memo]}`
+      );
+    }
+  }
+});
+
+test('convert: 全出力行の品目が予算以下(1件抜き取りでは長い注文を取りこぼす)', () => {
+  const { COL } = require('./core.js');
+  for (const opt of [{}, { splitByItem: true }, { aggregate: false }]) {
+    const { rows } = convert(LONG_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, ...opt });
+    for (const r of rows) {
+      assert.ok(
+        charLen(r[COL.item]) <= ITEM_FIELD_MAX,
+        `${JSON.stringify(opt)} で ${charLen(r[COL.item])}字: ${r[COL.item]}`
+      );
+    }
+  }
+});
+
+test('convert: 長い2品でも品目に両方の名前が出る(「ほか1点」の退行検知)', () => {
+  const { COL } = require('./core.js');
+  const { rows } = convert(LONG_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const row = rows.find((r) => r[COL.date] === '2026-06-05');
+  assert.ok(row, '対象行が無い');
+  assert.ok(row[COL.item].includes('乳液'), row[COL.item]);
+  assert.ok(row[COL.item].includes('浄水器'), row[COL.item]);
+  assert.ok(!row[COL.item].includes('ほか'), row[COL.item]);
+  // 実機で赤字になったメモは、既定では注文IDだけになる
+  assert.equal(row[COL.memo], '注文 503-1000012-0000122');
+});
+
+// ------------------------------------------------------- §9-3 注記が消えないこと
+test('convert: memo=full で注記3種(返金・ギフト券・分割出荷)が同時に残る', () => {
+  // 商品名を先に詰める実装だと、注記が末尾から押し出されて静かに消える
+  const { COL } = require('./core.js');
+  const row = orderRow(
+    'Gift Certificate/Card and Visa - 5171',
+    'T',
+    '2026-06-01T00:00:00Z and 2026-06-02T00:00:00Z',
+    `${LONG_NAME_A}${LONG_NAME_B}`, // わざと長い商品名
+    '5,000',
+    'Closed'
+  );
+  const { rows } = convert([row], [{ 'Order ID': 'T', 'Refund Amount': '500' }], {
+    ...DEFAULTS,
+    memo: 'full',
+  });
+  const memo = rows[0][COL.memo];
+  assert.ok(charLen(memo) <= FIELD_MAX_LEN, `${charLen(memo)}字: ${memo}`);
+  assert.ok(memo.includes('返金500円を差引済み'), memo);
+  assert.ok(memo.includes('ギフト券併用'), memo);
+  assert.ok(memo.includes('2回に分けて出荷'), memo);
+  assert.ok(memo.includes('注文 T'), memo);
+});
+
+// --------------------------------------------------- §9-5 商品ごとに1行(splitByItem)
+test('convert: splitByItem は行が増えても合計金額が合算モードと一致する', () => {
+  const agg = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+  const split = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, splitByItem: true });
+  assert.ok(split.rows.length > agg.rows.length, '行が分かれていない');
+  assert.equal(sumAmount(split.rows), sumAmount(agg.rows));
+});
+
+test('convert: splitByItem で同一注文の2品が別行になり、品目に1品ずつ残る', () => {
+  const { COL } = require('./core.js');
+  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, splitByItem: true });
+  const a = rows.filter((r) => r[COL.date] === '2026-06-30' && Number(r[COL.amount]) !== 1611);
+  assert.equal(a.length, 2);
+  assert.deepEqual(a.map((r) => r[COL.item]).sort(), ['シート', '紙コップ']);
+  assert.deepEqual(a.map((r) => r[COL.amount]).sort(), ['1180', '477']);
+});
+
+test('convert: splitByItem でも同名商品は1行に ×N でまとまる', () => {
+  const { COL } = require('./core.js');
+  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, splitByItem: true });
+  const c = rows.find((r) => r[COL.item].includes('今治'));
+  assert.equal(c[COL.item], '今治×2');
+  assert.equal(c[COL.amount], '4740');
+});
+
+// ------------------------------------------------------------- §9-6 返金の按分
+test('convert: 1商品の額を超える返金は注文内の他の行へ繰り越す(過大計上の防止)', () => {
+  const orders = [
+    orderRow('Visa - 5171', 'R', '2026-06-01T00:00:00Z', '安い品', '500', 'Closed'),
+    orderRow('Visa - 5171', 'R', '2026-06-01T00:00:00Z', '高い品', '2,000', 'Closed'),
+  ];
+  const refunds = [{ 'Order ID': 'R', 'Refund Amount': '2200' }];
+  const { rows } = convert(orders, refunds, { ...DEFAULTS, splitByItem: true });
+  // 2,500 − 2,200 = 300。高い品(2,000)を使い切り、残り200を安い品から引く
+  assert.equal(sumAmount(rows), 300);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][7], '安い品');
+  assert.equal(rows[0][8], '300');
+});
+
+test('convert: 使い切れなかった返金は握り潰さず注記に出す', () => {
+  const orders = [
+    orderRow('Visa - 5171', 'R2', '2026-06-01T00:00:00Z', '品', '1,000', 'Closed'),
+  ];
+  const { rows, notes } = convert(orders, [{ 'Order ID': 'R2', 'Refund Amount': '3000' }], DEFAULTS);
+  assert.equal(rows.length, 0);
+  assert.ok(
+    notes.some((n) => n.includes('差し引く明細がありません')),
+    notes.join(' / ')
+  );
+});
+
+test('convert: 返金は発送日が新しいグループから順に充当する(合算モードは従来どおり)', () => {
+  const orders = [
+    orderRow('Visa - 5171', 'Y2', '2026-06-01T00:00:00Z', '先発送', '1,000', 'Closed'),
+    orderRow('Visa - 5171', 'Y2', '2026-06-05T00:00:00Z', '後発送', '2,000', 'Closed'),
+  ];
+  const { rows } = convert(orders, [{ 'Order ID': 'Y2', 'Refund Amount': '2,500' }], DEFAULTS);
+  // 後発送(2,000)を使い切り、残り500を先発送から引く
+  assert.deepEqual(
+    rows.map((r) => [r[7], r[8]]),
+    [['先発送', '500']]
+  );
+});
+
+// --------------------------------------------------- §6 行の選択に使う meta.key
+test('convert: aggregate=false でも meta.key が行ごとに一意(空文字にしない)', () => {
+  // 空文字のままだと全行が同一キーになり、1行外した瞬間に全行が消える
+  const { meta } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, aggregate: false });
+  const keys = meta.map((m) => m.key);
+  assert.ok(
+    keys.every((k) => k),
+    '空のキーがある'
+  );
+  assert.equal(new Set(keys).size, keys.length, `重複キー: ${keys.join(' , ')}`);
+  assert.ok(
+    meta.every((m) => m.oid),
+    '注文IDが入っていない'
+  );
+});
+
+test('convert: splitByItem でも meta.key は行ごとに一意', () => {
+  const { rows, meta } = convert(LONG_ORDERS, FIXTURE_REFUNDS, {
+    ...DEFAULTS,
+    splitByItem: true,
+  });
+  const keys = meta.map((m) => m.key);
+  assert.equal(meta.length, rows.length);
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+// ------------------------------------------------------- §5 カテゴリの内訳(2択)
+test('SUBCATEGORY_CHOICES: 選択肢は2つ・既定は先頭・ファイル名タグを持つ', () => {
+  const { DEFAULT_OPTIONS } = require('./core.js');
+  assert.deepEqual(
+    SUBCATEGORY_CHOICES.map((c) => c.value),
+    ['ゆうすけAmazon', 'ともかAmazon']
+  );
+  assert.equal(DEFAULT_OPTIONS.subcategory, 'ゆうすけAmazon');
+  assert.ok(
+    SUBCATEGORY_CHOICES.every((c) => /^[a-z]+$/.test(c.tag)),
+    'タグは ASCII'
+  );
+});
+
+test('convert: subcategory を切り替えると3列目が変わる', () => {
+  const { COL } = require('./core.js');
+  for (const choice of SUBCATEGORY_CHOICES) {
+    const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, {
+      ...DEFAULTS,
+      subcategory: choice.value,
+    });
+    assert.ok(rows.every((r) => r[COL.subcategory] === choice.value));
+  }
 });

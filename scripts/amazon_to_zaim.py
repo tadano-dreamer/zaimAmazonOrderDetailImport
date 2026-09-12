@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 Amazon 注文履歴 (Order History.csv) から特定のクレジットカードの注文を抽出し、
-Zaim インポート用 CSV (日付,カテゴリ,カテゴリの内訳,お店,支払い元,品目,支出金額) を生成する。
+Zaim インポート用 CSV
+(日付,カテゴリ,カテゴリの内訳,メモ,お店,支払元,入金先,品目,支出金額) を生成する。
+列の並びは Zaim の取込設定画面と同じ順序・同じ個数(上から順に 1〜9 を選ぶだけ)。
 
 ■ 実態(カード明細/Zaim連携)に合わせた集計ルール
   1. 出荷単位で合算 : 同じ注文で同じ日に発送された明細を 1 エントリにまとめ、金額を合計する。
@@ -20,6 +22,9 @@ Zaim インポート用 CSV (日付,カテゴリ,カテゴリの内訳,お店,�
     python amazon_to_zaim.py --month 2026-07       # その月だけ出力(月次取込用)
     python amazon_to_zaim.py --zip "Your Orders.zip"  # ZIP から解凍してから処理
     python amazon_to_zaim.py --no-aggregate        # 合算せず明細1行=1エントリ(旧挙動)
+    python amazon_to_zaim.py --split-items         # 同じ支払いでも商品ごとに1行
+    python amazon_to_zaim.py --memo full           # メモに全商品名も入れる(既定は注記のみ)
+    python amazon_to_zaim.py --subcategory ともかAmazon   # カテゴリの内訳を切り替える
 
 注意: カード下4桁1つで絞ると、カード更新・再発行で番号が変わった時点以降が
       丸ごと落ちる。--card は必ず実データの利用期間を見て指定すること。
@@ -39,10 +44,14 @@ from pathlib import Path
 # --- 既定値 ---------------------------------------------------------------
 DEFAULT_CARD = "5171"                       # 抽出するカード下4桁
 DEFAULT_CATEGORY = "生活費"                  # Zaim カテゴリ (固定)
-DEFAULT_SUBCATEGORY = "ゆうすけインポート"    # Zaim カテゴリの内訳 (固定)
+# Zaim カテゴリの内訳。自由入力だと打ち間違いがそのまま新しい内訳として Zaim 側に
+# 増えるため、選択肢に閉じる (増やすときはここを直す)。core.js と同じ並び。
+SUBCATEGORY_CHOICES = ["ゆうすけAmazon", "ともかAmazon"]
+DEFAULT_SUBCATEGORY = SUBCATEGORY_CHOICES[0]
 DEFAULT_STORE = "Amazon"                    # Zaim お店
 DEFAULT_SOURCE = "ゆうEPOS"                  # Zaim 支払い元 (EPOS = Visa 5171)
 DEFAULT_TZ = "jst"                          # 計上日のタイムゾーン (jst / utc)
+DEFAULT_MEMO_MODE = "notes"                 # メモ欄の中身 (notes / none / full)
 
 JST = timezone(timedelta(hours=9))          # 日本時間
 
@@ -54,9 +63,15 @@ REFUND_CSV_REL = Path("Your Orders") / "Your Returns & Refunds" / "Refund Detail
 ZAIM_HEADER = ["日付", "カテゴリ", "カテゴリの内訳", "メモ", "お店",
                "支払元", "入金先", "品目", "支出金額"]
 COL_AMOUNT = 8                              # ZAIM_HEADER 内の支出金額の位置(0始まり)
-ITEM_MAX_LEN = 24                           # 品目の最大長(全文はメモへ)
+ITEM_MAX_LEN = 24                           # 1商品あたりの見出し長
+# Zaim の1項目に入る最大文字数。実機のメモ欄で 100文字超が赤字になり保存できなかった。
+FIELD_MAX_LEN = 100
+# 品目欄の予算。Zaim 側の上限は未確認なので安全側 (24文字×2 + 「ほかN点」が収まる)。
+ITEM_FIELD_MAX = 60
+MEMO_MODES = ("notes", "none", "full")
 NON_PURCHASE_STATUSES = {"Cancelled", "Canceled"}
 ITEM_JOIN = " / "                           # 複数商品をまとめる際の区切り
+MEMO_JOIN = " / "
 
 
 def unzip_if_needed(base_dir: Path, zip_name: str | None) -> None:
@@ -127,6 +142,20 @@ def load_refunds(path: Path) -> dict[str, int]:
     return dict(refunds)
 
 
+def truncate(text: str, max_len: int) -> str:
+    """max_len 文字以内に収める (切ったら末尾を … にする)。
+
+    戻り値の長さは必ず max_len 以下。Zaim の項目上限を超えると取込時に弾かれるため、
+    「… を足したら1文字はみ出す」ことがあってはいけない。
+    """
+    s = text or ""
+    if len(s) <= max_len:
+        return s
+    if max_len <= 0:
+        return ""
+    return s[:max_len - 1] + "…"
+
+
 def shorten_name(raw: str, max_len: int = ITEM_MAX_LEN) -> str:
     """商品名を家計簿で読める見出しに整える(宣伝ブロックを落として詰める)。"""
     # 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
@@ -140,35 +169,72 @@ def shorten_name(raw: str, max_len: int = ITEM_MAX_LEN) -> str:
     return s if len(s) <= max_len else s[:max_len].strip() + "…"
 
 
-def item_label(names: list[str]) -> str:
-    """商品名リスト → 品目欄の1行。同名は ×N、複数種類は「先頭 ほかN点」。"""
+def item_label(names: list[str], max_len: int = ITEM_FIELD_MAX) -> str:
+    """商品名リスト → 品目欄の1行。同名は ×N。
+
+    予算いっぱいまで商品名を並べ、入りきらない分だけ「ほかN点」に畳む。先頭1件だけ
+    出して「ほか1点」にすると、何を買ったのか家計簿から分からなくなる。
+    """
     counts: dict[str, int] = {}
     for n in names:
         n = (n or "").strip()
         counts[n] = counts.get(n, 0) + 1
-    kinds = list(counts.items())
-    if not kinds:
+    labels = [shorten_name(n) + (f"×{c}" if c > 1 else "") for n, c in counts.items()]
+    if not labels:
         return ""
-    first_name, first_count = kinds[0]
-    head = shorten_name(first_name) + (f"×{first_count}" if first_count > 1 else "")
-    return head if len(kinds) == 1 else f"{head} ほか{len(kinds) - 1}点"
+
+    text = labels[0]
+    shown = 1
+    for i in range(1, len(labels)):
+        candidate = f"{text}{ITEM_JOIN}{labels[i]}"
+        rest = len(labels) - i - 1
+        # 「ほかN点」を付けた瞬間に予算を超えないよう、先に足して判定する
+        tail = f" ほか{rest}点" if rest > 0 else ""
+        if len(candidate + tail) > max_len:
+            break
+        text = candidate
+        shown = i + 1
+    omitted = len(labels) - shown
+    return truncate(f"{text} ほか{omitted}点" if omitted > 0 else text, max_len)
 
 
 def build_memo(names: list[str], oid: str = "", refund: int = 0,
-               gift: bool = False, shipment_count: int = 1) -> str:
-    """メモ欄。品目を畳んでいるぶん、全商品名と注記をここに残す。"""
-    parts = [combine_names(names)]
+               gift: bool = False, shipment_count: int = 1,
+               overridden_from: int | None = None,
+               mode: str = DEFAULT_MEMO_MODE) -> str:
+    """メモ欄。Zaim の上限 (100文字) を必ず守る。
+
+    既定 (notes) は注記と注文IDだけ。商品名は品目欄が持つ。注記を残すのは、あとから
+    カード明細と突合するときに要るため (注文額と請求額が違う理由・Amazon 側を引くキー)。
+    full のときは注記を先に確保してから残り枠に商品名を入れる。商品名を先に詰めると
+    注記が末尾から押し出されて静かに消え、金額のズレに気付けなくなる。
+    """
+    if mode not in MEMO_MODES:
+        mode = DEFAULT_MEMO_MODE
+    if mode == "none":
+        return ""
+
+    notes: list[str] = []
     # 返金とギフト券併用は同時に起こり得る。elif にすると返金がある注文だけ
     # ギフト券の注記が消え、JS 側の出力と食い違う(実請求額との差に気付けなくなる)
     if refund:
-        parts.append(f"返金{refund}円を差引済み")
-    if gift:
-        parts.append("ギフト券併用のため実請求額と差がある可能性あり")
+        notes.append(f"返金{refund}円を差引済み")
+    if overridden_from is not None:
+        notes.append(f"注文総額{overridden_from}円→実請求額に補正")
+    elif gift:
+        notes.append("ギフト券併用のため実請求額と差がある可能性あり")
     if shipment_count > 1:
-        parts.append(f"{shipment_count}回に分けて出荷(カード明細では分割計上のことあり)")
+        notes.append(f"{shipment_count}回に分けて出荷(カード明細では分割計上のことあり)")
     if oid:
-        parts.append(f"注文 {oid}")
-    return " / ".join(p for p in parts if p)
+        notes.append(f"注文 {oid}")
+
+    tail = truncate(MEMO_JOIN.join(p for p in notes if p), FIELD_MAX_LEN)
+    if mode == "notes":
+        return tail
+
+    budget = FIELD_MAX_LEN - (len(tail) + len(MEMO_JOIN) if tail else 0)
+    head = truncate(combine_names(names), budget) if budget > 0 else ""
+    return MEMO_JOIN.join(p for p in (head, tail) if p)
 
 
 def zaim_row(date: str, memo: str, item: str, amount: int,
@@ -189,7 +255,9 @@ def combine_names(names: list[str]) -> str:
 def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
             category: str, subcategory: str, store: str, source: str,
             aggregate: bool, jst: bool,
-            date_from: str = "", date_to: str = "") -> tuple[list[list[str]], list[str]]:
+            date_from: str = "", date_to: str = "",
+            split_by_item: bool = False,
+            memo_mode: str = DEFAULT_MEMO_MODE) -> tuple[list[list[str]], list[str]]:
     """抽出条件に合う行を Zaim 形式へ変換。戻り値: (出力行, 注記メッセージ).
 
     card は下4桁の文字列または文字列リスト。カード更新で下4桁が変わった場合に
@@ -229,8 +297,9 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         out = [
             zaim_row(
                 parse_date(r.get("Ship Date") or r.get("Order Date", ""), jst),
-                build_memo([(r.get("Product Name") or "").strip()], oid=r.get("Order ID", "")),
-                shorten_name((r.get("Product Name") or "").strip()),
+                build_memo([(r.get("Product Name") or "").strip()],
+                           oid=r.get("Order ID", ""), mode=memo_mode),
+                item_label([(r.get("Product Name") or "").strip()]),
                 parse_amount(r.get("Total Amount", "")),
                 category, subcategory, store, source,
             )
@@ -240,14 +309,16 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         return [r for r in out if in_range(r[0])], notes
 
     # 2) 出荷単位 (Order ID × 発送日) でグループ化
-    groups: dict[tuple[str, str], dict] = {}
+    #    split_by_item のときは商品名もキーに足して「商品ごとに1行」にする
+    groups: dict[tuple[str, ...], dict] = {}
     for r in picked:
         oid = r.get("Order ID", "")
         ship = parse_date(r.get("Ship Date") or r.get("Order Date", ""), jst)
-        key = (oid, ship)
+        key = (oid, ship, (r.get("Product Name") or "").strip()) if split_by_item else (oid, ship)
         g = groups.setdefault(
             key,
-            {"date": ship, "amount": 0, "names": [], "gift": False, "shipment_count": 1},
+            {"oid": oid, "date": ship, "amount": 0, "names": [],
+             "gift": False, "shipment_count": 1},
         )
         g["amount"] += parse_amount(r.get("Total Amount", "")) or 0
         g["names"].append(r.get("Product Name") or "")
@@ -257,32 +328,48 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         ship_values = split_date_values(r.get("Ship Date") or r.get("Order Date", ""))
         g["shipment_count"] = max(g["shipment_count"], len(ship_values))
 
-    # 3) 返金を該当注文の(最も遅い発送日の)グループから差し引く
-    order_keys: dict[str, list] = defaultdict(list)
-    for key in groups:
-        order_keys[key[0]].append(key)
+    # 3) 返金を該当注文へ充当する (発送日が新しい順 → 金額が大きい順に、0円になるまで)
+    #
+    # 1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
+    # その行だけにぶつかり、その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
+    # 返金前の金額のまま残る (= 過大計上)。使い切れなかった分は注記に出す。
+    order_groups: dict[str, list] = defaultdict(list)
+    for g in groups.values():
+        order_groups[g["oid"]].append(g)
     for oid, refund_amt in refunds.items():
-        keys = order_keys.get(oid)
-        if not keys or refund_amt <= 0:
+        group_list = order_groups.get(oid)
+        if not group_list or refund_amt <= 0:
             continue
-        target = max(keys, key=lambda k: k[1])  # 最新発送日のグループへ
-        groups[target]["amount"] -= refund_amt
-        groups[target]["refund"] = refund_amt
-        notes.append(f"返金反映: {groups[target]['date']} -{refund_amt}円 "
-                     f"(注文 {oid}) → 実質 {groups[target]['amount']}円")
+        ordered = sorted(group_list, key=lambda g: (g["date"], g["amount"]), reverse=True)
+        remaining = refund_amt
+        for g in ordered:
+            if remaining <= 0:
+                break
+            take = min(remaining, g["amount"])
+            if take <= 0:
+                continue
+            g["amount"] -= take
+            g["refund"] = g.get("refund", 0) + take
+            remaining -= take
+            notes.append(f"返金反映: {g['date']} -{take}円 "
+                         f"(注文 {oid}) → 実質 {g['amount']}円")
+        if remaining > 0:
+            notes.append(f"返金{refund_amt}円のうち {remaining}円は"
+                         f"差し引く明細がありません(注文 {oid})")
 
     # 4) Zaim 行へ整形
     out: list[list[str]] = []
-    for key, g in groups.items():
+    for g in groups.values():
         amt = g["amount"]
         if amt <= 0:
             notes.append(f"除外(実質0円/全額返金): {g['date']} {combine_names(g['names'])[:30]}")
             continue
         out.append(zaim_row(
             g["date"],
-            build_memo(g["names"], oid=key[0], refund=g.get("refund", 0),
+            build_memo(g["names"], oid=g["oid"], refund=g.get("refund", 0),
                        gift=g.get("gift", False),
-                       shipment_count=g.get("shipment_count", 1)),
+                       shipment_count=g.get("shipment_count", 1),
+                       mode=memo_mode),
             item_label(g["names"]),
             amt, category, subcategory, store, source,
         ))
@@ -308,13 +395,21 @@ def main() -> None:
     ap.add_argument("--month", default="",
                     help="計上日を YYYY-MM の1か月に絞る (--from/--to より優先)")
     ap.add_argument("--category", default=DEFAULT_CATEGORY)
-    ap.add_argument("--subcategory", default=DEFAULT_SUBCATEGORY)
+    ap.add_argument("--subcategory", default=DEFAULT_SUBCATEGORY, choices=SUBCATEGORY_CHOICES,
+                    help="Zaim カテゴリの内訳 (選択肢に閉じる: 打ち間違いをそのまま"
+                         "新しい内訳として増やさないため)")
     ap.add_argument("--store", default=DEFAULT_STORE)
     ap.add_argument("--source", default=DEFAULT_SOURCE, help="Zaim 支払い元")
     ap.add_argument("--tz", default=DEFAULT_TZ, choices=["jst", "utc"],
                     help="計上日のタイムゾーン (既定 jst=日本時間, utc=変換なし)")
     ap.add_argument("--no-aggregate", dest="aggregate", action="store_false",
                     help="出荷単位で合算せず、明細1行=1エントリで出力する")
+    ap.add_argument("--split-items", dest="split_by_item", action="store_true",
+                    help="同じ支払いでも商品ごとに行を分ける (Zaim 上は別レコードになる。"
+                         "カード明細との1:1突合は崩れるが合計は変わらない)")
+    ap.add_argument("--memo", default=DEFAULT_MEMO_MODE, choices=list(MEMO_MODES),
+                    help="メモ欄の中身 (既定 notes=注記と注文IDのみ / none=空欄 / "
+                         "full=全商品名も入れる)。いずれも100文字で必ず切る")
     ap.add_argument("--out", default=None, help="出力ファイル名 (既定: zaim_import_<card>.csv)")
     args = ap.parse_args()
 
@@ -336,6 +431,7 @@ def main() -> None:
         rows, refunds, cards, args.category, args.subcategory,
         args.store, args.source, args.aggregate, jst=(args.tz == "jst"),
         date_from=date_from, date_to=date_to,
+        split_by_item=args.split_by_item, memo_mode=args.memo,
     )
 
     out_name = args.out or f"zaim_import_{'-'.join(cards)}.csv"
@@ -348,7 +444,12 @@ def main() -> None:
         w.writerows(out_rows)
 
     total = sum(int(r[COL_AMOUNT]) for r in out_rows)
-    mode = "出荷単位で合算" if args.aggregate else "明細1行=1エントリ"
+    if not args.aggregate:
+        mode = "明細1行=1エントリ"
+    elif args.split_by_item:
+        mode = "商品ごとに1行"
+    else:
+        mode = "出荷単位で合算"
     tzlabel = "日付=発送日/JST" if args.tz == "jst" else "日付=発送日/UTC"
     print(f"[OK] 出力: {out_path}  ({mode}, {tzlabel}, 支払い元={args.source or '空欄'})")
     print(f"[OK] カード {'/'.join(cards)}: {len(out_rows)} エントリ / 合計 {total:,} 円")

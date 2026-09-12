@@ -43,10 +43,38 @@
     amount: 8,
   };
 
-  /** 品目の最大長。家計簿の一覧で読める長さに収める(全文はメモへ)。 */
+  /** 1商品あたりの見出し長。家計簿の一覧で読める長さに収める。 */
   const ITEM_MAX_LEN = 24;
+
+  /**
+   * Zaim の1項目に入る最大文字数。実機(iOS アプリ「支出の詳細」)のメモ欄で
+   * 100文字を超えると赤字になり保存できないことを確認済み。
+   */
+  const FIELD_MAX_LEN = 100;
+
+  /**
+   * 品目欄の予算。**Zaim 側の上限は未確認**(赤字が出たのはメモだけだった)。
+   * 超過すると取込時に弾かれるので安全側に振ってある。上限が判明したらここ1行を直す。
+   * 60 あれば 24文字の商品名を2つ並べて「ほかN点」を足しても収まる。
+   */
+  const ITEM_FIELD_MAX = 60;
+
+  /** メモ欄の中身。notes=注記+注文IDのみ(既定) / none=空欄 / full=全商品名も入れる。 */
+  const MEMO_MODES = ['notes', 'none', 'full'];
+
+  /**
+   * カテゴリの内訳の選択肢。自由入力だと打ち間違いがそのまま新しい内訳として
+   * Zaim 側に増えるため、選択肢に閉じる(増やすときはここを直す)。
+   * tag は出力ファイル名に入れる ASCII 表記(どちらへ取り込んだかを控えるため)。
+   */
+  const SUBCATEGORY_CHOICES = [
+    { value: 'ゆうすけAmazon', tag: 'yusuke' },
+    { value: 'ともかAmazon', tag: 'tomoka' },
+  ];
+
   const NON_PURCHASE_STATUSES = new Set(['Cancelled', 'Canceled']);
   const ITEM_JOIN = ' / ';
+  const MEMO_JOIN = ' / ';
   const JST_OFFSET_MS = 9 * 3600 * 1000;
   const BOM = '﻿';
 
@@ -54,10 +82,12 @@
     card: '5171',
     cards: null, // 配列を渡すと複数カードを合算(カード再発行で下4桁が変わるケース用)
     category: '生活費',
-    subcategory: 'ゆうすけインポート',
+    subcategory: SUBCATEGORY_CHOICES[0].value,
     store: 'Amazon',
     source: 'ゆうEPOS',
     aggregate: true,
+    splitByItem: false, // true で「商品ごとに1行」(Zaim では別レコードになる)
+    memo: 'notes', // MEMO_MODES のいずれか
     jst: true,
     dateSource: 'ship', // 'ship'=発送日(既定・oracle と同じ) / 'order'=注文日
     dateFrom: '', // 'YYYY-MM-DD' 以降(含む)。空なら下限なし
@@ -184,6 +214,21 @@
   }
 
   /**
+   * 文字列を maxLen 文字以内に収める(切ったら末尾を … にする)。
+   * 戻り値の長さは **必ず maxLen 以下**。Zaim の項目上限を超えると取込時に弾かれるため、
+   * 「… を足したら1文字はみ出す」ことがあってはいけない。
+   *
+   * コードポイント単位で数える: JS の slice はコード単位で切るため、絵文字などの
+   * サロゲートペアを分断し、UTF-8 に書き出した時点で「�」になる。
+   */
+  function truncate(text, maxLen) {
+    const chars = Array.from(String(text == null ? '' : text));
+    if (chars.length <= maxLen) return chars.join('');
+    if (maxLen <= 0) return '';
+    return `${chars.slice(0, maxLen - 1).join('')}…`;
+  }
+
+  /**
    * Amazon の商品名を家計簿で読める見出しに整える。
    * 「【まとめ買い】」「[大容量]」のような宣伝ブロックを落として詰め、
    * 長すぎるものは切る(落とした情報はメモに全文が残る)。
@@ -206,19 +251,36 @@
 
   /**
    * 出荷グループの商品名リスト → 品目欄の1行。
-   * 同名は ×N、種類が複数なら「先頭 ほかN点」に畳む。
+   * 同名は ×N。**予算いっぱいまで商品名を並べ**、入りきらない分だけ「ほかN点」に畳む。
+   *
+   * 先頭1件だけ出して「ほか1点」にすると、何を買ったのか家計簿から分からなくなる
+   * (実機で「乳液… ほか1点」となり、消えた浄水器カートリッジが追えなかった)。
    */
-  function itemLabel(names) {
+  function itemLabel(names, maxLen) {
+    const budget = maxLen || ITEM_FIELD_MAX;
     const counts = new Map();
     for (const raw of names || []) {
       const n = String(raw == null ? '' : raw).trim();
       counts.set(n, (counts.get(n) || 0) + 1);
     }
-    const kinds = [...counts.entries()];
-    if (kinds.length === 0) return '';
-    const [firstName, firstCount] = kinds[0];
-    const head = shortenName(firstName) + (firstCount > 1 ? `×${firstCount}` : '');
-    return kinds.length === 1 ? head : `${head} ほか${kinds.length - 1}点`;
+    const labels = [...counts.entries()].map(
+      ([n, c]) => shortenName(n) + (c > 1 ? `×${c}` : '')
+    );
+    if (labels.length === 0) return '';
+
+    let text = labels[0];
+    let shown = 1;
+    for (let i = 1; i < labels.length; i++) {
+      const candidate = `${text}${ITEM_JOIN}${labels[i]}`;
+      const rest = labels.length - i - 1;
+      // 「ほかN点」を付けた瞬間に予算を超えないよう、先に足して判定する
+      const tail = rest > 0 ? ` ほか${rest}点` : '';
+      if (Array.from(candidate + tail).length > budget) break;
+      text = candidate;
+      shown = i + 1;
+    }
+    const omitted = labels.length - shown;
+    return truncate(omitted > 0 ? `${text} ほか${omitted}点` : text, budget);
   }
 
   /** Refund Details.csv の行配列 → {Order ID: 返金合計額}。0/不正額はスキップ。 */
@@ -412,43 +474,55 @@
 
     if (!opt.aggregate) {
       // 旧挙動: 明細 1 行 = 1 エントリ(返金は無視)
-      const all = picked.map((r) => {
+      //
+      // meta.key は「出力する行を選ぶ」機能の識別子なので、**1行ごとに一意**でなければ
+      // ならない。同一注文・同一日の明細が複数あるため、連番まで含めてキーにする。
+      const seq = new Map(); // "<注文ID>\t<計上日>" → その組で何件目か
+      const built = picked.map((r) => {
+        const oid = r['Order ID'] || '';
+        const date = entryDate(r);
         const name = (r['Product Name'] || '').trim();
-        return zaimRow({
-          date: entryDate(r),
-          memo: buildMemo([name], { oid: r['Order ID'] || '' }),
-          item: shortenName(name),
-          amount: parseAmount(r['Total Amount']),
-          opt,
-        });
+        const amount = parseAmount(r['Total Amount']);
+        const base = `${oid}\t${date}`;
+        const n = (seq.get(base) || 0) + 1;
+        seq.set(base, n);
+        return {
+          row: zaimRow({
+            date,
+            memo: buildMemo([name], { oid, memo: opt.memo }),
+            item: itemLabel([name]),
+            amount,
+            opt,
+          }),
+          meta: { key: `${base}\t#${n}`, oid, date, amount, names: name },
+        };
       });
-      all.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      const months = listMonths(all);
-      const range = dateRange(all);
-      const out = all.filter((r) => inRange(r[0], opt.dateFrom, opt.dateTo));
+      built.sort((a, b) => (a.row[0] < b.row[0] ? -1 : a.row[0] > b.row[0] ? 1 : 0));
+      const allRows = built.map((b) => b.row);
+      const months = listMonths(allRows);
+      const range = dateRange(allRows);
+      const kept = built.filter((b) => inRange(b.row[0], opt.dateFrom, opt.dateTo));
       return {
-        rows: out,
+        rows: kept.map((b) => b.row),
         notes: collectNotes(),
         warnings: [],
         unmatchedOverrides: [],
-        meta: out.map((r) => ({
-          key: '',
-          oid: '',
-          date: r[COL.date],
-          amount: Number(r[COL.amount]),
-          names: r[COL.memo].split(' / ')[0], // 品目は畳んでいるので全文はここから
-        })),
+        meta: kept.map((b) => b.meta),
         months,
         range,
       };
     }
 
     // 2) 出荷単位 (Order ID × 発送日) でグループ化
-    const groups = new Map(); // key = oid + "\t" + date
+    //    splitByItem のときは商品名もキーに足して「商品ごとに1行」にする。
+    //    合算モードのキー形式は変えない(amountOverrides が "<注文ID>\t<計上日>" 前提)。
+    const groups = new Map(); // key = oid + "\t" + date [+ "\t" + 商品名]
     for (const r of picked) {
       const oid = r['Order ID'] || '';
       const ship = entryDate(r);
-      const key = `${oid}\t${ship}`;
+      const key = opt.splitByItem
+        ? `${oid}\t${ship}\t${(r['Product Name'] || '').trim()}`
+        : `${oid}\t${ship}`;
       let g = groups.get(key);
       if (!g) {
         g = { oid, date: ship, amount: 0, names: [], gift: false, shipmentCount: 1, shipmentDates: [] };
@@ -471,23 +545,41 @@
       }
     }
 
-    // 3) 返金を該当注文の(最も遅い発送日の)グループから差し引く
-    const orderKeys = new Map(); // oid → [group]
+    // 3) 返金を該当注文へ充当する(発送日が新しい順 → 金額が大きい順に、0円になるまで)
+    //
+    // 1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
+    // その行だけにぶつかり、**その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
+    // 返金前の金額のまま残る**(= 過大計上)。使い切れなかった分は握り潰さず注記に出す。
+    const groupsOfOrder = new Map(); // oid → [group]
     for (const g of groups.values()) {
-      if (!orderKeys.has(g.oid)) orderKeys.set(g.oid, []);
-      orderKeys.get(g.oid).push(g);
+      if (!groupsOfOrder.has(g.oid)) groupsOfOrder.set(g.oid, []);
+      groupsOfOrder.get(g.oid).push(g);
     }
     for (const [oid, refundAmt] of Object.entries(refunds)) {
-      const list = orderKeys.get(oid);
+      const list = groupsOfOrder.get(oid);
       if (!list || refundAmt <= 0) continue;
-      let target = list[0];
-      for (const g of list) if (g.date > target.date) target = g;
-      target.amount -= refundAmt;
-      target.refund = refundAmt;
-      notes.push(
-        `返金反映: ${target.date} -${refundAmt}円 (注文 ${oid}) → 実質 ${target.amount}円`,
-        target.date
-      );
+      const order = list
+        .slice()
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.amount - a.amount));
+      let remaining = refundAmt;
+      for (const g of order) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, g.amount);
+        if (take <= 0) continue;
+        g.amount -= take;
+        g.refund = (g.refund || 0) + take;
+        remaining -= take;
+        notes.push(
+          `返金反映: ${g.date} -${take}円 (注文 ${oid}) → 実質 ${g.amount}円`,
+          g.date
+        );
+      }
+      if (remaining > 0) {
+        notes.push(
+          `返金${refundAmt}円のうち ${remaining}円は差し引く明細がありません(注文 ${oid})`,
+          order.length > 0 ? order[0].date : ''
+        );
+      }
     }
 
     // 4) 実請求額の手動上書き(ギフト券併用など、CSV からは復元できない差額の補正)
@@ -497,14 +589,9 @@
     // CSV に出てしまうため、注文が1グループしか持たない場合は Order ID 単独の
     // キーも受け付ける(UI はこちらを使う)。どれにも当たらなかった上書きは
     // 握り潰さず、注記と unmatchedOverrides で必ず表に出す。
-    const groupsByOrder = new Map();
-    for (const g of groups.values()) {
-      if (!groupsByOrder.has(g.oid)) groupsByOrder.set(g.oid, []);
-      groupsByOrder.get(g.oid).push(g);
-    }
     const usedOverrideKeys = new Set();
     for (const [key, g] of groups) {
-      const single = (groupsByOrder.get(g.oid) || []).length === 1;
+      const single = (groupsOfOrder.get(g.oid) || []).length === 1;
       let hit = null;
       if (Object.prototype.hasOwnProperty.call(overrides, key)) hit = key;
       else if (single && Object.prototype.hasOwnProperty.call(overrides, g.oid)) hit = g.oid;
@@ -545,6 +632,7 @@
             refund: g.refund || 0,
             shipmentCount: g.shipmentCount,
             overriddenFrom: g.overriddenFrom,
+            memo: opt.memo,
           }),
           item: itemLabel(g.names),
           amount: g.amount,
@@ -578,7 +666,7 @@
         warnings.push({
           key,
           // 計上日が変わってもズレない上書きキー(1注文=1グループなら Order ID)
-          overrideKey: (groupsByOrder.get(g.oid) || []).length === 1 ? g.oid : key,
+          overrideKey: (groupsOfOrder.get(g.oid) || []).length === 1 ? g.oid : key,
           date: g.date,
           amount: g.amount,
           rawAmount: g.overriddenFrom === undefined ? g.amount : g.overriddenFrom,
@@ -624,22 +712,38 @@
   }
 
   /**
-   * メモ欄。品目は一覧で読める長さに畳んでいるので、
-   * **全商品名と、家計簿側で判断が要る注記**をここに残す。
+   * メモ欄。**Zaim の上限(100文字)を必ず守る**。
+   *
+   * 既定(notes)は注記と注文IDだけ。商品名は品目欄が持つようになったので外してある。
+   * 注記を残すのは、あとからカード明細と突合するときに要るため:
+   *   返金/ギフト券/複数出荷 = 注文額とカード請求額が違う理由、注文ID = Amazon 側を引くキー。
+   *
+   * full のときは **注記を先に確保してから残り枠に商品名を入れる**。商品名を先に詰めると
+   * 注記が末尾から押し出されて静かに消え、金額のズレに気付けなくなる。
    */
   function buildMemo(names, info) {
-    const parts = [combineNames(names)];
-    if (info.refund) parts.push(`返金${info.refund}円を差引済み`);
+    const mode = MEMO_MODES.includes(info.memo) ? info.memo : 'notes';
+    if (mode === 'none') return '';
+
+    const notes = [];
+    if (info.refund) notes.push(`返金${info.refund}円を差引済み`);
     if (info.overriddenFrom !== undefined && info.overriddenFrom !== null) {
-      parts.push(`注文総額${info.overriddenFrom}円→実請求額に補正`);
+      notes.push(`注文総額${info.overriddenFrom}円→実請求額に補正`);
     } else if (info.gift) {
-      parts.push('ギフト券併用のため実請求額と差がある可能性あり');
+      notes.push('ギフト券併用のため実請求額と差がある可能性あり');
     }
     if (info.shipmentCount > 1) {
-      parts.push(`${info.shipmentCount}回に分けて出荷(カード明細では分割計上のことあり)`);
+      notes.push(`${info.shipmentCount}回に分けて出荷(カード明細では分割計上のことあり)`);
     }
-    if (info.oid) parts.push(`注文 ${info.oid}`);
-    return parts.filter((x) => x).join(' / ');
+    if (info.oid) notes.push(`注文 ${info.oid}`);
+
+    const tail = truncate(notes.filter((x) => x).join(MEMO_JOIN), FIELD_MAX_LEN);
+    if (mode === 'notes') return tail;
+
+    const used = tail ? Array.from(tail).length + MEMO_JOIN.length : 0;
+    const budget = FIELD_MAX_LEN - used;
+    const head = budget > 0 ? truncate(combineNames(names), budget) : '';
+    return [head, tail].filter((x) => x).join(MEMO_JOIN);
   }
 
   /**
@@ -706,11 +810,16 @@
     ZAIM_HEADER,
     COL,
     DEFAULT_OPTIONS,
+    FIELD_MAX_LEN,
+    ITEM_FIELD_MAX,
+    MEMO_MODES,
+    SUBCATEGORY_CHOICES,
     parseAmount,
     formatDate,
     splitDateValues,
     parseCsv,
     combineNames,
+    truncate,
     shortenName,
     itemLabel,
     loadRefunds,

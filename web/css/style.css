@@ -346,6 +346,19 @@ tbody tr:last-child td { border-bottom: 0; }
 .col-date { width: 6.2em; white-space: nowrap; }
 .col-amount { width: 5.5em; text-align: right; white-space: nowrap; }
 td.col-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* 出力する行の選択。セル全体を当たり判定にして 44px を確保する */
+.col-select { width: 44px; }
+th.col-select, td.col-select { padding: 0; text-align: center; }
+.row-select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  cursor: pointer;
+}
+.row-select input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+tr.row-off td:not(.col-select) { opacity: 0.45; text-decoration: line-through; }
 td.item-cell { overflow: hidden; }
 .item-clamp {
   display: -webkit-box;
@@ -354,6 +367,14 @@ td.item-cell { overflow: hidden; }
   overflow: hidden;
   word-break: break-word;
 }
+/* 狭い端末では、選択列を足したぶん日付・金額を詰めて品目の幅を確保する */
+@media (max-width: 420px) {
+  thead th, tbody td { padding: 8px 6px; }
+  /* 6.1em 未満だと "2026-05-20" が列から溢れる(320px 幅で実測) */
+  .col-date { width: 6.1em; }
+  .col-amount { width: 4.8em; }
+}
+
 tr.row-gift td { background: var(--warn-bg); }
 /* カード明細側で出荷ごとに分割計上され得る行(合計は一致する) */
 tr.row-split td.col-amount { text-decoration: underline dotted; }

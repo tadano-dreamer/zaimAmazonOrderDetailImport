@@ -23,8 +23,8 @@
     periodFrom: $('period-from'),
     periodTo: $('period-to'),
     periodScope: $('period-scope'),
+    subcategoryChoices: $('subcategory-choices'),
     category: $('opt-category'),
-    subcategory: $('opt-subcategory'),
     store: $('opt-store'),
     source: $('opt-source'),
     result: $('result-section'),
@@ -38,6 +38,7 @@
     emptyResult: $('empty-result'),
     tableWrap: $('table-wrap'),
     previewBody: $('preview-body'),
+    selectAll: $('select-all'),
     btnDownload: $('btn-download'),
     btnShare: $('btn-share'),
     btnCopy: $('btn-copy'),
@@ -61,6 +62,11 @@
     months: [], // 期間フィルタ前の月サマリ(プリセット生成用)
     fullRange: { min: '', max: '' }, // 期間フィルタ前の全体レンジ
     overrides: {}, // 上書きキー(通常は Order ID) → 実請求額(ギフト券併用等の手動補正)
+    rows: [], // 直近の変換結果(選択の付け外しで使い回す)
+    meta: [],
+    // 出力しない行のキー。「選んだ行」ではなく「外した行」を覚えるのは、期間やカードを
+    // 変えて行が増えたときに、新しい行が既定で出力対象になるようにするため。
+    excluded: new Set(),
   };
 
   /**
@@ -191,6 +197,7 @@
     state.dateTo = '';
     state.customPeriod = false;
     state.overrides = {};
+    state.excluded.clear(); // 別のデータなので、外した行の記憶は引き継がない
     renderCardList();
 
     setStatus(
@@ -466,8 +473,15 @@
 
   // ------------------------------------------------------------ プレビュー生成
 
+  /** 選択中のラジオ値(未生成・未選択でも既定値で必ず答える)。 */
+  function radio(name, fallback) {
+    const checked = document.querySelector(`input[name="${name}"]:checked`);
+    return checked ? checked.value : fallback;
+  }
+
   function currentOptions() {
-    const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+    // まとめ方は3択。合算(既定) / 商品ごとに1行 / 明細ごと
+    const grouping = radio('grouping', 'shipment');
     return {
       cards: state.selectedCards,
       card: state.selectedCards[0] || '',
@@ -475,17 +489,45 @@
       dateTo: state.dateTo,
       amountOverrides: state.overrides,
       category: el.category.value.trim() || Core.DEFAULT_OPTIONS.category,
-      subcategory: el.subcategory.value.trim(),
+      subcategory: radio('subcategory', Core.SUBCATEGORY_CHOICES[0].value),
       store: el.store.value.trim(),
       source: el.source.value.trim(),
-      aggregate: radio('aggregate') === 'on',
-      jst: radio('tz') === 'jst',
-      dateSource: radio('date-source'),
+      aggregate: grouping !== 'detail',
+      splitByItem: grouping === 'item',
+      memo: radio('memo', Core.DEFAULT_OPTIONS.memo),
+      jst: radio('tz', 'jst') === 'jst',
+      dateSource: radio('date-source', 'ship'),
     };
   }
 
-  function renderSummary(summary) {
-    el.sumCount.textContent = `${summary.count}件`;
+  /**
+   * カテゴリの内訳のラジオ。選択肢は core の SUBCATEGORY_CHOICES が唯一の定義点。
+   * 自由入力にすると打ち間違いがそのまま新しい内訳として Zaim 側に増える。
+   */
+  function renderSubcategoryChoices() {
+    el.subcategoryChoices.replaceChildren(
+      ...Core.SUBCATEGORY_CHOICES.map((choice, i) => {
+        const label = document.createElement('label');
+        label.className = 'radio-chip';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'subcategory';
+        input.value = choice.value;
+        input.checked = i === 0;
+        input.addEventListener('change', render);
+        const span = document.createElement('span');
+        span.textContent = choice.value;
+        label.append(input, span);
+        return label;
+      })
+    );
+  }
+
+  /** 件数チップは「選択中の件数」。一部だけ外しているときだけ全体件数も出す。 */
+  function renderSummary(summary, totalCount) {
+    const total = totalCount === undefined ? summary.count : totalCount;
+    el.sumCount.textContent =
+      summary.count === total ? `${summary.count}件` : `${summary.count}件(全${total}件中)`;
     el.sumTotal.textContent = formatYen(summary.total);
     el.sumRange.textContent = summary.count ? `${summary.minDate} 〜 ${summary.maxDate}` : '–';
   }
@@ -576,6 +618,26 @@
         const tr = document.createElement('tr');
         if (m.gift) tr.classList.add('row-gift');
         if (m.splitShipment) tr.classList.add('row-split');
+
+        // 出力する行の選択。セル全体を当たり判定にする(実機で押しにくいと使われない)
+        const tdSelect = document.createElement('td');
+        tdSelect.className = 'col-select';
+        const pick = document.createElement('label');
+        pick.className = 'row-select';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !state.excluded.has(m.key);
+        box.setAttribute('aria-label', `${r[0]} ${r[Core.COL.item]} を出力する`);
+        tr.classList.toggle('row-off', !box.checked);
+        box.addEventListener('change', () => {
+          if (box.checked) state.excluded.delete(m.key);
+          else state.excluded.add(m.key);
+          tr.classList.toggle('row-off', !box.checked);
+          refreshSelection();
+        });
+        pick.appendChild(box);
+        tdSelect.appendChild(pick);
+
         const tdDate = document.createElement('td');
         tdDate.className = 'col-date';
         tdDate.textContent = r[0];
@@ -589,10 +651,39 @@
         const tdAmount = document.createElement('td');
         tdAmount.className = 'col-amount';
         tdAmount.textContent = Number(r[Core.COL.amount]).toLocaleString('ja-JP');
-        tr.append(tdDate, tdItem, tdAmount);
+        tr.append(tdSelect, tdDate, tdItem, tdAmount);
         return tr;
       })
     );
+  }
+
+  /**
+   * 選択中の行から CSV・サマリ・ボタンの状態を作り直す。
+   * 表そのものは組み直さない(チェックのたびに DOM を捨てるとフォーカスが飛ぶ)。
+   */
+  function refreshSelection() {
+    const rows = state.rows;
+    const meta = state.meta;
+    const out = rows.filter((r, i) => !state.excluded.has((meta[i] || {}).key));
+
+    state.csvText = Core.generateCsv(out);
+    renderSummary(Core.summarize(out), rows.length);
+
+    // 全選択チェックボックス: 全部選択 / 全部解除 / 一部だけ
+    el.selectAll.checked = out.length > 0;
+    el.selectAll.indeterminate = out.length > 0 && out.length < rows.length;
+
+    const noneSelected = rows.length > 0 && out.length === 0;
+    el.emptyResult.textContent = noneSelected
+      ? '出力する行が選択されていません。表のチェックを付け直してください。'
+      : '条件に一致する明細がありませんでした。カードや期間の設定を確認してください。';
+    el.emptyResult.hidden = !(rows.length === 0 || noneSelected);
+    el.tableWrap.hidden = rows.length === 0;
+
+    const nothingToSave = out.length === 0;
+    el.btnDownload.disabled = nothingToSave;
+    el.btnShare.disabled = nothingToSave;
+    el.btnCopy.disabled = nothingToSave;
   }
 
   function render() {
@@ -601,6 +692,8 @@
     if (opt.cards.length === 0) {
       // カード未選択: 誤って全件出さないよう、空表示にして選択を促す
       state.csvText = '';
+      state.rows = [];
+      state.meta = [];
       renderSummary({ count: 0, total: 0, minDate: '', maxDate: '' });
       renderGiftWarnings([]);
       renderNotes([]);
@@ -639,13 +732,18 @@
     }
     renderPeriodControls(months, range);
 
-    state.csvText = Core.generateCsv(rows);
-    state.fileName = `zaim_import_${state.selectedCards.join('-')}_${periodTag()}.csv`;
+    // 取り込み先(内訳)をファイル名に入れておくと、二重取込の管理がしやすい
+    const tag = (Core.SUBCATEGORY_CHOICES.find((c) => c.value === opt.subcategory) || {}).tag;
+    state.fileName =
+      `zaim_import_${state.selectedCards.join('-')}_${periodTag()}` +
+      `${tag ? `_${tag}` : ''}.csv`;
 
-    renderSummary(Core.summarize(rows));
+    state.rows = rows;
+    state.meta = meta;
     renderGiftWarnings(warnings);
     renderNotes(notes);
     renderTable(rows, meta);
+    refreshSelection(); // CSV・サマリ・ボタンの状態は選択中の行から作る
 
     const grand = months.reduce((s, m) => s + m.total, 0);
     const grandCount = months.reduce((s, m) => s + m.count, 0);
@@ -653,15 +751,6 @@
       ? `対象カード ${state.selectedCards.join('・')} の全期間を出力します。`
       : `${el.periodFrom.value} 〜 ${el.periodTo.value} 分のみを出力します` +
         `(このカードの全期間は ${grandCount}件 / ${formatYen(grand)})。`;
-
-    el.emptyResult.textContent =
-      '条件に一致する明細がありませんでした。カードや期間の設定を確認してください。';
-    const empty = rows.length === 0;
-    el.emptyResult.hidden = !empty;
-    el.tableWrap.hidden = empty;
-    el.btnDownload.disabled = empty;
-    el.btnShare.disabled = empty;
-    el.btnCopy.disabled = empty;
   }
 
   // ------------------------------------------------- Zaim の取込設定の案内
@@ -774,11 +863,26 @@
     });
   });
 
-  // カードのチェックボックスと期間プルダウンは動的生成側で個別に配線しているため、
-  // ここでは固定のラジオ(計上日・まとめ方)だけをまとめて拾う。
-  for (const input of document.querySelectorAll('#settings-section input[type="radio"]')) {
+  // 内訳のラジオは選択肢を core から作る(生成側で個別に配線している)
+  renderSubcategoryChoices();
+
+  // カードのチェックボックス・期間プルダウン・内訳ラジオは動的生成側で個別に配線して
+  // いるため、ここでは固定のラジオ(計上日・まとめ方・メモ)だけをまとめて拾う。
+  for (const input of document.querySelectorAll(
+    '#settings-section input[type="radio"]:not([name="subcategory"])'
+  )) {
     input.addEventListener('change', render);
   }
+
+  // 全選択 / 全解除。表は組み直す(各行のチェックと打ち消し線を揃えるため)
+  el.selectAll.addEventListener('change', () => {
+    for (const m of state.meta) {
+      if (el.selectAll.checked) state.excluded.delete(m.key);
+      else state.excluded.add(m.key);
+    }
+    renderTable(state.rows, state.meta);
+    refreshSelection();
+  });
   el.periodSelect.addEventListener('change', onPresetChange);
   for (const input of [el.periodFrom, el.periodTo]) {
     // どちらを編集したかを渡す(触っていない側の表示値を確定させないため)
@@ -786,7 +890,7 @@
     input.addEventListener('change', () => onDateInputChange(input, true));
     input.addEventListener('input', () => onDateInputChange(input, false)); // WebKit で change が来ない対策
   }
-  for (const id of ['opt-category', 'opt-subcategory', 'opt-store', 'opt-source']) {
+  for (const id of ['opt-category', 'opt-store', 'opt-source']) {
     $(id).addEventListener('input', render);
   }
 

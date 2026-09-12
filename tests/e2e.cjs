@@ -203,11 +203,11 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     );
 
     // 合算OFF: 件数が増える(39 → 明細数)
-    await page.check('input[name="aggregate"][value="off"]');
+    await page.check('input[name="grouping"][value="detail"]');
     const rawCount = parseInt(await page.textContent('#sum-count'), 10);
     check(rawCount > 39, `合算OFFで明細ごと表示(${rawCount}件)`);
-    await page.check('input[name="aggregate"][value="on"]');
-    check((await page.textContent('#sum-count')) === '39件', '合算ONに戻すと39件');
+    await page.check('input[name="grouping"][value="shipment"]');
+    check((await page.textContent('#sum-count')) === '39件', '出荷単位に戻すと39件');
 
     // 注文日基準: 期間が変わる(今治は注文 7/7)
     await page.check('input[name="date-source"][value="order"]');
@@ -234,9 +234,9 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
   await selectCards(page, ['5171']);
   await page.waitForFunction(
-    () => document.getElementById('sum-count').textContent === '5件'
+    () => document.getElementById('sum-count').textContent === '6件'
   );
-  check((await page.textContent('#sum-total')) === '15,048円', 'ダミー: 合計 15,048円');
+  check((await page.textContent('#sum-total')) === '19,048円', 'ダミー: 合計 19,048円');
   check(
     (await page.textContent('#sum-range')) === '2026-05-20 〜 2026-07-09',
     'ダミー: 期間 2026-05-20〜2026-07-09'
@@ -260,12 +260,12 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
 
   await page.click('#card-switch-note button');
   await page.waitForFunction(
-    () => document.getElementById('sum-count').textContent === '8件'
+    () => document.getElementById('sum-count').textContent === '9件'
   );
-  check((await page.textContent('#sum-count')) === '8件', '「追加」で 5171+7474 の 8件になる');
+  check((await page.textContent('#sum-count')) === '9件', '「追加」で 5171+7474 の 9件になる');
   check(
-    (await page.textContent('#sum-total')) === '29,718円',
-    `5171+7474 合計 29,718円 → ${await page.textContent('#sum-total')}`
+    (await page.textContent('#sum-total')) === '33,718円',
+    `5171+7474 合計 33,718円 → ${await page.textContent('#sum-total')}`
   );
   check(await page.isHidden('#card-switch-note'), '両方選ぶと切替警告が消える');
   check(
@@ -340,7 +340,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
 
   await page.selectOption('#period-select', 'all');
   await page.waitForFunction(
-    () => document.getElementById('sum-count').textContent === '8件'
+    () => document.getElementById('sum-count').textContent === '9件'
   );
   check(
     (await page.inputValue('#period-from')) === '2026-05-20' &&
@@ -364,7 +364,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     `日付もそのカードの範囲に入る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
   );
   await selectCards(page, ['5171', '7474']);
-  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '8件');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
 
   // --- シナリオ F4: 日付欄の片側だけ編集しても、もう一方は確定させない ---------
   // 日付欄は未指定のときデータ全体の端を「表示上の初期値」として出しているだけ。
@@ -374,17 +374,17 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   await page.fill('#period-to', '2026-07-21'); // 終了日だけを編集(開始日は触らない)
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '1件');
   await selectCards(page, ['5171', '7474']); // 開始が古い 5171 を追加
-  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '7件');
   check(
-    (await page.textContent('#sum-total')) === '16,818円',
-    `終了日だけ指定 → カード追加で古い明細も出る → 6件 / ${await page.textContent('#sum-total')}`
+    (await page.textContent('#sum-total')) === '20,818円',
+    `終了日だけ指定 → カード追加で古い明細も出る → 7件 / ${await page.textContent('#sum-total')}`
   );
   check(
     (await page.inputValue('#period-from')) === '2026-05-20',
     `開始日は追加カードのデータ先頭に追従する → ${await page.inputValue('#period-from')}`
   );
   await page.selectOption('#period-select', 'all');
-  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '8件');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
 
   // --- シナリオ F5: 「日付で指定」を選んでも巻き戻らない ----------------------
   await page.selectOption('#period-select', 'custom');
@@ -394,7 +394,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     `「日付で指定」の選択が保持される → ${await page.inputValue('#period-select')}`
   );
   check(
-    (await page.textContent('#sum-count')) === '8件',
+    (await page.textContent('#sum-count')) === '9件',
     '「日付で指定」を選ぶだけでは出力は変わらない'
   );
   await page.selectOption('#period-select', 'all');
@@ -431,7 +431,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '3件');
   check((await page.textContent('#sum-count')) === '3件', '打ち直し完了で 7/19〜7/31 の3件になる');
   await page.selectOption('#period-select', 'all');
-  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '8件');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
 
   // --- シナリオ G: ギフト券併用の実請求額を手動補正 -------------------------
   // ギフト券の充当額は注文履歴に載らず、総額のままだと Zaim とズレる(実データ 5,760 vs 4,091)。
@@ -444,8 +444,8 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     beforeFix
   );
   check(
-    (await page.textContent('#sum-total')) === '28,049円',
-    `実請求額 4,091円に補正 → ${await page.textContent('#sum-total')}(29,718 − 5,760 + 4,091)`
+    (await page.textContent('#sum-total')) === '32,049円',
+    `実請求額 4,091円に補正 → ${await page.textContent('#sum-total')}(33,718 − 5,760 + 4,091)`
   );
   check(
     (await page.textContent('#notes-box')).includes('金額を手動指定'),
@@ -460,8 +460,104 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   await selectCards(page, ['5171']);
   await page.selectOption('#period-select', 'all');
   await page.waitForFunction(
-    () => document.getElementById('sum-count').textContent === '5件'
+    () => document.getElementById('sum-count').textContent === '6件'
   );
+
+  // --- シナリオ J: 出力する行を選ぶ -----------------------------------------
+  // 抽出結果と Zaim の実記録には、どうしても残る差がある(別アカウントの購入・
+  // Zaim 側の記録漏れ)。取り込みたくない行をその場で外せること。
+  const allCsv = normalize(await captureCsvViaDownload(page));
+  const firstAmount = await page.$eval('#preview-body tr:first-child td.col-amount', (td) =>
+    Number(td.textContent.replace(/[^0-9]/g, ''))
+  );
+  const allTotal = Number((await page.textContent('#sum-total')).replace(/[^0-9]/g, ''));
+  await page.locator('#preview-body tr:first-child .row-select input').click();
+  await page.waitForFunction(() =>
+    document.getElementById('sum-count').textContent.includes('全6件中')
+  );
+  check(
+    (await page.textContent('#sum-count')) === '5件(全6件中)',
+    `1行外すと件数が減る → ${await page.textContent('#sum-count')}`
+  );
+  const pickedTotal = Number((await page.textContent('#sum-total')).replace(/[^0-9]/g, ''));
+  check(
+    pickedTotal === allTotal - firstAmount,
+    `合計がその行の金額分だけ減る → ${pickedTotal}(${allTotal} − ${firstAmount})`
+  );
+  const pickedCsv = normalize(await captureCsvViaDownload(page));
+  check(
+    pickedCsv.length === allCsv.length - 1,
+    `CSVの行数も1減る → ${pickedCsv.length} 行(外す前 ${allCsv.length} 行)`
+  );
+
+  // 外したままカードを足す: 増えた行は既定でチェック済み、外した行は外れたまま
+  await selectCards(page, ['5171', '7474']);
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '8件(全9件中)'
+  );
+  check(
+    (await page.textContent('#sum-count')) === '8件(全9件中)',
+    'カードを足すと増えた3件はチェック済みで出る(外した1件だけ除外のまま)'
+  );
+
+  // 全解除 → 保存させない + 理由を出す
+  await page.click('#select-all');
+  await page.waitForFunction(
+    () => document.getElementById('sum-count').textContent === '0件(全9件中)'
+  );
+  check(
+    (await page.textContent('#empty-result')).includes('選択されていません'),
+    `全解除で案内が出る → ${(await page.textContent('#empty-result')).slice(0, 24)}…`
+  );
+  check(await page.isDisabled('#btn-download'), '全解除でダウンロードが無効になる');
+  check(await page.isDisabled('#btn-copy'), '全解除でコピーも無効になる');
+  check(await page.isVisible('#table-wrap'), '全解除でも表は残る(付け直せる)');
+
+  await page.click('#select-all');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
+  check((await page.textContent('#sum-count')) === '9件', '全選択に戻すと9件');
+  check(!(await page.isDisabled('#btn-download')), 'ダウンロードが再び有効になる');
+
+  // --- シナリオ K: カテゴリの内訳(2択)--------------------------------------
+  // 取り込み先の内訳を間違えると家計簿が汚れる。CSV の3列目に出ること。
+  const yusukeCsv = normalize(await captureCsvViaDownload(page));
+  check(
+    yusukeCsv.slice(1).every((l) => l.split(',')[2] === 'ゆうすけAmazon'),
+    `既定の内訳が3列目に入る → ${yusukeCsv[1].split(',')[2]}`
+  );
+  await page.check('input[name="subcategory"][value="ともかAmazon"]');
+  const tomokaCsv = normalize(await captureCsvViaDownload(page));
+  check(
+    tomokaCsv.slice(1).every((l) => l.split(',')[2] === 'ともかAmazon'),
+    `内訳を切り替えると3列目が変わる → ${tomokaCsv[1].split(',')[2]}`
+  );
+  check(
+    tomokaCsv.length === yusukeCsv.length &&
+      (await page.textContent('#sum-total')) === '33,718円',
+    '内訳を切り替えても件数・金額は変わらない'
+  );
+  await page.check('input[name="subcategory"][value="ゆうすけAmazon"]');
+
+  // --- シナリオ L: 商品ごとに1行(1支払い=複数明細の代替)--------------------
+  await openAdvanced(page, true);
+  await page.check('input[name="grouping"][value="item"]');
+  await page.waitForFunction(
+    () => Number(document.getElementById('sum-count').textContent.replace(/[^0-9]/g, '')) > 9
+  );
+  const splitCount = Number((await page.textContent('#sum-count')).replace(/[^0-9]/g, ''));
+  check(splitCount > 9, `商品ごとに1行で行が増える → ${splitCount}件`);
+  check(
+    (await page.textContent('#sum-total')) === '33,718円',
+    `行が増えても合計は変わらない → ${await page.textContent('#sum-total')}`
+  );
+  await page.check('input[name="grouping"][value="shipment"]');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
+  check((await page.textContent('#sum-count')) === '9件', '出荷単位に戻すと9件');
+  await openAdvanced(page, false);
+
+  // 5171 のみ・全期間に戻す(以降のシナリオへの影響を避ける)
+  await selectCards(page, ['5171']);
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
 
   // --- シナリオ H: 同じ ZIP を選び直しても、期間の表示と実際の出力範囲が一致する ---
   // 選択肢の中身が前回と同一だとプルダウンの再構築がスキップされる。表示だけ
@@ -481,9 +577,9 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   const reloadedPeriod = await page.inputValue('#period-select');
   const reloadedCount = await page.textContent('#sum-count');
   check(reloadedPeriod === 'all', `ZIP再選択で期間の表示も全期間に戻る → ${reloadedPeriod}`);
-  // 表示が「全期間」なら5件、月指定なら2件でなければ、表示と中身が矛盾している
+  // 表示が「全期間」なら6件、月指定なら2件でなければ、表示と中身が矛盾している
   check(
-    (reloadedPeriod === 'all') === (reloadedCount === '5件'),
+    (reloadedPeriod === 'all') === (reloadedCount === '6件'),
     `表示(${reloadedPeriod})と実際の出力件数(${reloadedCount})が矛盾しない`
   );
 
@@ -618,11 +714,11 @@ async function main() {
     const status = await page.textContent('#load-status');
     check(status.includes('統合'), `統合の注記が表示される: "${status}"`);
     await selectCards(page, ['5171']);
-    await page.waitForFunction(() => document.getElementById('sum-count').textContent === '5件');
-    check((await page.textContent('#sum-count')) === '5件', '分割ZIP: 件数 5件(全パーツ読込)');
+    await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
+    check((await page.textContent('#sum-count')) === '6件', '分割ZIP: 件数 6件(全パーツ読込)');
     check(
-      (await page.textContent('#sum-total')) === '15,048円',
-      '分割ZIP: 合計 15,048円(重複返金の二重差引なし)'
+      (await page.textContent('#sum-total')) === '19,048円',
+      '分割ZIP: 合計 19,048円(重複返金の二重差引なし)'
     );
     await browser.close();
   }
@@ -675,6 +771,35 @@ async function main() {
       `${engineName} 日付入力が自分の枠からはみ出さない(${geo.overflowsOwnCell}px)`
     );
     check(geo.widthDiff <= 1, `${engineName} 開始日と終了日が同じ幅(差 ${geo.widthDiff}px)`);
+    // 選択列を足したぶん、品目が潰れたり日付が列から溢れたりしていないこと
+    const tableGeo = await page.evaluate(() => {
+      const item = document.querySelector('#preview-body td.item-cell');
+      const date = document.querySelector('#preview-body td.col-date');
+      const pick = document.querySelector('#preview-body .row-select');
+      const wrap = document.getElementById('table-wrap');
+      const table = document.getElementById('preview-table');
+      const r = pick.getBoundingClientRect();
+      return {
+        item: Math.round(item.getBoundingClientRect().width),
+        dateOverflow: Math.round(date.scrollWidth - date.clientWidth),
+        tapW: Math.round(r.width),
+        tapH: Math.round(r.height),
+        tableOverflow: Math.round(table.scrollWidth - wrap.clientWidth),
+      };
+    });
+    check(tableGeo.item >= 60, `${engineName} 320px幅でも品目列に幅が残る(${tableGeo.item}px)`);
+    check(
+      tableGeo.dateOverflow <= 0,
+      `${engineName} 日付が列からはみ出さない(${tableGeo.dateOverflow}px)`
+    );
+    check(
+      tableGeo.tapW >= 40 && tableGeo.tapH >= 44,
+      `${engineName} 行選択のタップ領域 ${tableGeo.tapW}×${tableGeo.tapH}px`
+    );
+    check(
+      tableGeo.tableOverflow <= 0,
+      `${engineName} 表が枠内に収まる(${tableGeo.tableOverflow}px)`
+    );
     if (engineName === 'WebKit') {
       await page.screenshot({ path: path.join(SHOT_DIR, `se-320-dummy.png`), fullPage: true });
     }

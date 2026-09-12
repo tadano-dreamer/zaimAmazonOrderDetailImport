@@ -31,8 +31,8 @@ const refundRows = core.parseCsv(fs.readFileSync(REFUND_CSV, 'utf8'));
 const { rows, notes, warnings } = core.convert(orderRows, refundRows, {});
 const s = core.summarize(rows);
 
-check(s.count === 5, `エントリ数 5 → ${s.count}`);
-check(s.total === 15048, `合計 15,048 → ${s.total.toLocaleString()}`);
+check(s.count === 6, `エントリ数 6 → ${s.count}`);
+check(s.total === 19048, `合計 19,048 → ${s.total.toLocaleString()}`);
 check(s.minDate === '2026-05-20' && s.maxDate === '2026-07-09', `期間 → ${s.minDate}〜${s.maxDate}`);
 check(warnings.length === 1, `ギフト券併用警告 1 件 → ${warnings.length}`);
 check(
@@ -99,7 +99,7 @@ check(
 const bothCards = core.convert(orderRows, refundRows, { cards: ['5171', '7474'] });
 const sBoth = core.summarize(bothCards.rows);
 check(
-  sBoth.count === 8 && sBoth.total === 15048 + 14670,
+  sBoth.count === 9 && sBoth.total === 19048 + 14670,
   `5171+7474 合算 → ${sBoth.count}件 / ${sBoth.total}円`
 );
 
@@ -135,9 +135,114 @@ check(
 const gift = core.convert(orderRows, refundRows, {}).warnings[0];
 const fixed = core.convert(orderRows, refundRows, { amountOverrides: { [gift.key]: 4091 } });
 check(
-  core.summarize(fixed.rows).total === 15048 - gift.rawAmount + 4091,
+  core.summarize(fixed.rows).total === 19048 - gift.rawAmount + 4091,
   `ギフト券併用を実請求額(4,091円)に補正 → ${core.summarize(fixed.rows).total}円`
 );
+
+// --- 項目の文字数上限(実機で赤字になったのはここ) --------------------------
+// 1件の抜き取りでは長い注文を取りこぼすので、**全出力行**を機械的に検査する。
+const charLen = (s) => Array.from(s).length;
+for (const [label, opt] of [
+  ['既定', {}],
+  ['memo=full', { memo: 'full' }],
+  ['商品ごとに1行', { splitByItem: true }],
+  ['明細ごと', { aggregate: false }],
+]) {
+  const out = core.convert(orderRows, refundRows, Object.assign({ cards: ['5171', '7474'] }, opt));
+  const tooLongMemo = out.rows.filter((r) => charLen(r[core.COL.memo]) > core.FIELD_MAX_LEN);
+  const tooLongItem = out.rows.filter((r) => charLen(r[core.COL.item]) > core.ITEM_FIELD_MAX);
+  check(
+    tooLongMemo.length === 0,
+    `${label}: 全 ${out.rows.length} 行のメモが ${core.FIELD_MAX_LEN} 文字以内` +
+      (tooLongMemo.length ? ` (超過 ${tooLongMemo.length} 行: ${tooLongMemo[0][core.COL.memo]})` : '')
+  );
+  check(
+    tooLongItem.length === 0,
+    `${label}: 全 ${out.rows.length} 行の品目が ${core.ITEM_FIELD_MAX} 文字以内` +
+      (tooLongItem.length ? ` (超過 ${tooLongItem.length} 行: ${tooLongItem[0][core.COL.item]})` : '')
+  );
+}
+
+// D012: 実機で「乳液… ほか1点」となり、もう1品が何なのか分からなかったケース
+const longRow = rows.find((r) => r[core.COL.date] === '2026-06-05');
+check(
+  longRow &&
+    longRow[core.COL.item].includes('乳液') &&
+    longRow[core.COL.item].includes('浄水器') &&
+    !longRow[core.COL.item].includes('ほか'),
+  `長い2品の注文は品目に両方出る → ${longRow ? longRow[core.COL.item] : 'なし'}`
+);
+check(
+  longRow && longRow[core.COL.memo] === '注文 503-1000012-0000122',
+  `既定のメモは注記と注文IDだけ → ${longRow ? longRow[core.COL.memo] : 'なし'}`
+);
+const longFull = core.convert(orderRows, refundRows, { memo: 'full' }).rows.find(
+  (r) => r[core.COL.date] === '2026-06-05'
+);
+check(
+  charLen(longFull[core.COL.memo]) <= core.FIELD_MAX_LEN,
+  `memo=full でも 100 文字以内に収まる → ${charLen(longFull[core.COL.memo])}字`
+);
+
+// --- 商品ごとに1行(splitByItem)------------------------------------------
+const bothSplit = core.convert(orderRows, refundRows, {
+  cards: ['5171', '7474'],
+  splitByItem: true,
+});
+const sSplit = core.summarize(bothSplit.rows);
+check(
+  sSplit.total === sBoth.total,
+  `商品ごとに1行でも合計は変わらない → ${sSplit.count}行 / ${sSplit.total}円(合算 ${sBoth.count}行)`
+);
+check(sSplit.count > sBoth.count, `商品ごとに1行で行が増える → ${sSplit.count} > ${sBoth.count}`);
+check(
+  new Set(bothSplit.meta.map((m) => m.key)).size === bothSplit.meta.length,
+  '商品ごとに1行でも meta.key が一意(行の選択が壊れない)'
+);
+const detail = core.convert(orderRows, refundRows, { cards: ['5171', '7474'], aggregate: false });
+check(
+  new Set(detail.meta.map((m) => m.key)).size === detail.meta.length &&
+    detail.meta.every((m) => m.key),
+  '明細ごとでも meta.key が一意(1行外すと全行消える不具合の防止)'
+);
+
+// --- カテゴリの内訳(2択)---------------------------------------------------
+check(
+  core.SUBCATEGORY_CHOICES.map((c) => c.value).join(',') === 'ゆうすけAmazon,ともかAmazon',
+  `内訳の選択肢 → ${core.SUBCATEGORY_CHOICES.map((c) => c.value).join(' / ')}`
+);
+check(
+  rows.every((r) => r[core.COL.subcategory] === 'ゆうすけAmazon'),
+  '既定の内訳が全行に入る'
+);
+const tomoka = core.convert(orderRows, refundRows, { subcategory: 'ともかAmazon' });
+check(
+  tomoka.rows.every((r) => r[core.COL.subcategory] === 'ともかAmazon') &&
+    core.summarize(tomoka.rows).total === s.total,
+  '内訳を切り替えても金額は変わらない'
+);
+
+// --- 新しいモードも Python 参照実装とバイト単位で一致すること -----------------
+// JS と Python は別々に書いた同じロジックなので、切り詰めの計算が1文字ずれただけでも
+// 出力が食い違う。モードごとにゴールデンを持って機械的に突き合わせる。
+for (const [label, opt, goldenPath] of [
+  ['memo=full', { memo: 'full' }, path.join(BASE, 'output', 'zaim_import_5171_full.csv')],
+  ['商品ごとに1行', { splitByItem: true }, path.join(BASE, 'output', 'zaim_import_5171_split.csv')],
+]) {
+  const js = toLines(core.generateCsv(core.convert(orderRows, refundRows, opt).rows));
+  const golden = toLines(fs.readFileSync(goldenPath, 'utf8'));
+  const same = js.length === golden.length && js.every((l, i) => l === golden[i]);
+  check(same, `${label}: JS 出力が Python 参照実装と一致(${golden.length}行)`);
+  if (!same) {
+    for (let i = 0; i < Math.max(js.length, golden.length); i++) {
+      if (js[i] !== golden[i]) {
+        console.log(`     行 ${i + 1}:`);
+        console.log(`       JS    : ${js[i]}`);
+        console.log(`       golden: ${golden[i]}`);
+      }
+    }
+  }
+}
 
 if (ok) console.log('[OK] ダミーデータ: JS 出力は Python 参照実装と完全一致');
 process.exitCode = ok ? 0 : 1;

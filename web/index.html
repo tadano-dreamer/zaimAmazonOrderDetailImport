@@ -61,6 +61,15 @@
         </p>
       </div>
 
+      <fieldset class="field" id="subcategory-field">
+        <legend>カテゴリの内訳(取り込み先)</legend>
+        <div class="radio-row" role="radiogroup" id="subcategory-choices"></div>
+        <p class="hint">
+          Zaim の「カテゴリの内訳」に入る値です。出力ファイル名にも入るので、
+          どちらに取り込んだか後から分かります。
+        </p>
+      </fieldset>
+
       <details class="field" id="advanced-settings">
         <summary>詳細設定(通常は変更不要)</summary>
 
@@ -79,17 +88,35 @@
         <fieldset class="field">
           <legend>まとめ方</legend>
           <div class="radio-row" role="radiogroup">
-            <label class="radio-chip"><input type="radio" name="aggregate" value="on" checked><span>出荷単位で合算<small>推奨</small></span></label>
-            <label class="radio-chip"><input type="radio" name="aggregate" value="off"><span>明細ごと</span></label>
+            <label class="radio-chip"><input type="radio" name="grouping" value="shipment" checked><span>出荷単位で合算<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="grouping" value="item"><span>商品ごとに1行</span></label>
+            <label class="radio-chip"><input type="radio" name="grouping" value="detail"><span>明細ごと</span></label>
           </div>
-          <p class="hint">返金は該当注文から自動で差し引かれます(合算時)。</p>
+          <p class="hint">
+            返金は該当注文から自動で差し引かれます(「明細ごと」を除く)。
+            <strong>商品ごとに1行</strong>にすると何を買ったかが1件ずつ残りますが、
+            <strong>カード明細の1件が複数行になります</strong>(合計は変わりません)。
+          </p>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>メモ欄</legend>
+          <div class="radio-row" role="radiogroup">
+            <label class="radio-chip"><input type="radio" name="memo" value="notes" checked><span>注記と注文ID<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="memo" value="none"><span>空欄</span></label>
+            <label class="radio-chip"><input type="radio" name="memo" value="full"><span>全商品名も</span></label>
+          </div>
+          <p class="hint">
+            Zaim のメモは<strong>100文字まで</strong>(超えると保存できません)。どの設定でも
+            100文字以内に収めます。返金・ギフト券・分割出荷の注記は、あとでカード明細と
+            突合するときに要るので既定で残しています。
+          </p>
         </fieldset>
 
         <fieldset class="field">
           <legend>Zaimに入る固定値</legend>
           <div class="fixed-grid">
             <label>カテゴリ<input type="text" id="opt-category" value="生活費"></label>
-            <label>カテゴリの内訳<input type="text" id="opt-subcategory" value="ゆうすけインポート"></label>
             <label>お店<input type="text" id="opt-store" value="Amazon"></label>
             <label>支払元<input type="text" id="opt-source" value="ゆうEPOS"></label>
           </div>
@@ -117,11 +144,19 @@
 
       <div class="table-wrap" id="table-wrap">
         <table id="preview-table">
-          <thead><tr><th class="col-date">日付</th><th>品目</th><th class="col-amount">金額</th></tr></thead>
+          <thead><tr>
+            <th class="col-select">
+              <label class="row-select"><input type="checkbox" id="select-all" checked aria-label="すべての行を選択/解除"></label>
+            </th>
+            <th class="col-date">日付</th><th>品目</th><th class="col-amount">金額</th>
+          </tr></thead>
           <tbody id="preview-body"></tbody>
         </table>
       </div>
-      <p class="hint">カテゴリ・お店・支払元などの固定列もCSVには含まれます。</p>
+      <p class="hint">
+        <strong>チェックを外した行はCSVに含まれません</strong>(別アカウントの購入など、
+        取り込みたくない行を外せます)。カテゴリ・お店・支払元などの固定列もCSVには含まれます。
+      </p>
 
       <div class="actions">
         <button type="button" class="btn btn-primary" id="btn-download">⬇️ CSVをダウンロード</button>
