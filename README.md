@@ -61,7 +61,7 @@ node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュ�
 │   ├── amazon_to_zaim.py    #   参照実装(oracle): Amazon履歴 → Zaim CSV 変換 CLI
 │   ├── verify_equivalence.js#   JS出力と実データゴールデンCSVの等価性検証
 │   ├── make_dummy_data.js   #   PIIなしダミー Your Orders.zip 生成
-│   ├── make_zaim_probe.js   #   実機で項目の文字数上限を測る探り用CSV生成
+│   ├── make_zaim_probe.js   #   実機の挙動(文字数上限・記録の束ね方)を測る探り用CSV生成
 │   ├── verify_dummy.js      #   ダミーデータでのJS/Python等価性検証
 │   └── verify_parity_fuzz.js#   ランダム生成データでのJS/Python同値性検証
 ├── reference/               # 参照用データ
@@ -137,8 +137,11 @@ python scripts/amazon_to_zaim.py --memo full
   空欄・全商品名入りにも切り替えられるが、どの設定でも100文字以内に切る
 - **取り込みたくない行は外せる**: プレビューのチェックを外した行はCSVに含まれない
   (別アカウントの購入・Zaim側に既にある記録など)
-- **商品ごとに1行にもできる**: カード明細との1:1突合は崩れるが、何を買ったかが1件ずつ残る
-  (合計は変わらない)
+- **商品ごとに1行にもできる**: 記録の中の品目が商品単位になる(合計は変わらない)
+
+> ⚠️ **Zaim は取り込むとき、同日・同一支払元・同店の行を1つの記録にまとめます**
+> (レシート記帳)。CSV の行を増やしても Zaim 上の記録数は増えません。
+> 実データでは 39行 → 30記録。詳細と、分けたいときの手当ては `docs/IMPLEMENTATION.md` §11-6。
 
 詳細・根拠・検証値は `docs/IMPLEMENTATION.md` を参照。
 
