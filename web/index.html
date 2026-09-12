@@ -95,8 +95,9 @@
           </div>
           <p class="hint">
             返金は該当注文から自動で差し引かれます(「明細ごと」を除く)。
-            <strong>商品ごとに1行</strong>にすると何を買ったかが1件ずつ残りますが、
-            <strong>カード明細の1件が複数行になります</strong>(合計は変わりません)。
+            <strong>商品ごとに1行</strong>にするとCSVの行は増えますが、
+            Zaim 側でまとめられるため<strong>家計簿の件数は変わりません</strong>
+            (記録の中の品目が商品ごとに分かれます)。
           </p>
         </fieldset>
 
@@ -183,6 +184,13 @@
         <button type="button" class="btn" id="btn-copy-settings">📋 設定内容をコピー</button>
       </div>
       <p class="status" id="settings-status" role="status" aria-live="polite"></p>
+      <p class="notice notice-info">
+        ℹ️ <strong>同じ日の注文は1つの記録にまとまります</strong>
+        ― Zaim は取り込むとき、<strong>日付・お店・支払元が同じ行</strong>を
+        1件の記録(レシート記帳)に束ねます。別々の注文でも同じ日に発送されていれば
+        1件になり、それぞれは記録の中の<strong>品目</strong>として金額つきで残ります。
+        <strong>合計金額は変わりません。</strong>
+      </p>
       <p class="hint">
         いきなり本番に入れず、まず「<strong>アップロードをテスト</strong>」で結果を確認するのが安全です。
         Zaim は同じデータを二重に入れても弾かないので、
