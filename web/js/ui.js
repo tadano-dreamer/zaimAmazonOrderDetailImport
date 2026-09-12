@@ -64,6 +64,7 @@
     overrides: {}, // 上書きキー(通常は Order ID) → 実請求額(ギフト券併用等の手動補正)
     rows: [], // 直近の変換結果(選択の付け外しで使い回す)
     meta: [],
+    grouping: 'shipment', // 直近のまとめ方(変わったら行の選択を持ち越さない)
     // 出力しない行のキー。「選んだ行」ではなく「外した行」を覚えるのは、期間やカードを
     // 変えて行が増えたときに、新しい行が既定で出力対象になるようにするため。
     excluded: new Set(),
@@ -689,6 +690,19 @@
   function render() {
     if (!state.orderRows) return;
     const opt = currentOptions();
+
+    // まとめ方を変えたら行の選択は持ち越さない。行の識別子(meta.key)はまとめ方ごとに
+    // 形が違うので、持ち越すと「別のまとめ方では黙って出力される」「元に戻した瞬間に
+    // 昔の除外が復活する」という、画面から追えない状態になる。
+    const grouping = radio('grouping', 'shipment');
+    if (state.grouping !== grouping) {
+      state.grouping = grouping;
+      if (state.excluded.size > 0) {
+        state.excluded.clear();
+        setActionStatus('まとめ方を変えたため、行の選択をすべて戻しました。');
+      }
+    }
+
     if (opt.cards.length === 0) {
       // カード未選択: 誤って全件出さないよう、空表示にして選択を促す
       state.csvText = '';

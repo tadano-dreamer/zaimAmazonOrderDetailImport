@@ -540,7 +540,25 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
 
   // --- シナリオ L: 商品ごとに1行(1支払い=複数明細の代替)--------------------
   await openAdvanced(page, true);
+
+  // まとめ方を変えたら行の選択は持ち越さない。行の識別子はまとめ方ごとに形が違うので、
+  // 持ち越すと「別のまとめ方では黙って出力される」状態になる
+  await page.locator('#preview-body tr:first-child .row-select input').click();
+  await page.waitForFunction(() =>
+    document.getElementById('sum-count').textContent.includes('全9件中')
+  );
   await page.check('input[name="grouping"][value="item"]');
+  await page.waitForFunction(
+    () => !document.getElementById('sum-count').textContent.includes('中')
+  );
+  check(
+    !(await page.textContent('#sum-count')).includes('中'),
+    `まとめ方を変えると行の選択は戻る → ${await page.textContent('#sum-count')}`
+  );
+  check(
+    (await page.textContent('#action-status')).includes('行の選択'),
+    `戻したことを画面で知らせる → ${await page.textContent('#action-status')}`
+  );
   await page.waitForFunction(
     () => Number(document.getElementById('sum-count').textContent.replace(/[^0-9]/g, '')) > 9
   );

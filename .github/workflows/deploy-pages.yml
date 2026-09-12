@@ -26,6 +26,11 @@ jobs:
         run: node --test web/js/core.test.js
       - name: ダミーデータ等価性検証
         run: node scripts/verify_dummy.js
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: JS↔Python 同値性(ランダム生成データ)
+        run: node scripts/verify_parity_fuzz.js
 
   deploy:
     needs: test

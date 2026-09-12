@@ -39,6 +39,7 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 node --test web/js/core.test.js        # 単体テスト(94件)
 node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
+node scripts/verify_parity_fuzz.js     # JS↔Python 同値性(ランダム生成データ・要python)
 cd tests && npm install && npx playwright install chromium webkit
 node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュレーション)
 ```
@@ -59,7 +60,8 @@ node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュ�
 │   ├── amazon_to_zaim.py    #   参照実装(oracle): Amazon履歴 → Zaim CSV 変換 CLI
 │   ├── verify_equivalence.js#   JS出力と実データゴールデンCSVの等価性検証
 │   ├── make_dummy_data.js   #   PIIなしダミー Your Orders.zip 生成
-│   └── verify_dummy.js      #   ダミーデータでのJS/Python等価性検証
+│   ├── verify_dummy.js      #   ダミーデータでのJS/Python等価性検証
+│   └── verify_parity_fuzz.js#   ランダム生成データでのJS/Python同値性検証
 ├── reference/               # 参照用データ
 │   ├── zaim_import_base_9columns.csv  # 出力ヘッダの正(Zaimの取込設定と同じ並び)
 │   └── FileDescriptions.csv           # Amazonの各ファイル説明

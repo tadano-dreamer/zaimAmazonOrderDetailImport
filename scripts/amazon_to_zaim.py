@@ -208,6 +208,9 @@ def build_memo(names: list[str], oid: str = "", refund: int = 0,
     カード明細と突合するときに要るため (注文額と請求額が違う理由・Amazon 側を引くキー)。
     full のときは注記を先に確保してから残り枠に商品名を入れる。商品名を先に詰めると
     注記が末尾から押し出されて静かに消え、金額のズレに気付けなくなる。
+
+    overridden_from は core.js との同値性のために受けるだけで、CLI からは渡らない
+    (ギフト券併用の実請求額補正は Web UI だけの機能)。
     """
     if mode not in MEMO_MODES:
         mode = DEFAULT_MEMO_MODE
@@ -250,6 +253,41 @@ def combine_names(names: list[str]) -> str:
         n = (n or "").strip()
         counts[n] = counts.get(n, 0) + 1
     return ITEM_JOIN.join(f"{n}×{c}" if c > 1 else n for n, c in counts.items())
+
+
+def apply_refunds(groups: dict[tuple[str, ...], dict], refunds: dict[str, int],
+                  notes: list[str]) -> dict[str, list[dict]]:
+    """返金を該当注文へ充当する (発送日が新しい順 → 金額が大きい順に、0円になるまで)。
+
+    1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
+    その行だけにぶつかり、その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
+    返金前の金額のまま残る (= 過大計上)。使い切れなかった分は注記に出す。
+    groups は破壊的に更新する。戻り値は 注文ID → グループのリスト。
+    """
+    order_groups: dict[str, list[dict]] = defaultdict(list)
+    for g in groups.values():
+        order_groups[g["oid"]].append(g)
+    for oid, refund_amt in refunds.items():
+        group_list = order_groups.get(oid)
+        if not group_list or refund_amt <= 0:
+            continue
+        ordered = sorted(group_list, key=lambda g: (g["date"], g["amount"]), reverse=True)
+        remaining = refund_amt
+        for g in ordered:
+            if remaining <= 0:
+                break
+            take = min(remaining, g["amount"])
+            if take <= 0:
+                continue
+            g["amount"] -= take
+            g["refund"] = g.get("refund", 0) + take
+            remaining -= take
+            notes.append(f"返金反映: {g['date']} -{take}円 "
+                         f"(注文 {oid}) → 実質 {g['amount']}円")
+        if remaining > 0:
+            notes.append(f"返金{refund_amt}円のうち {remaining}円は"
+                         f"差し引く明細がありません(注文 {oid})")
+    return dict(order_groups)
 
 
 def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
@@ -328,34 +366,8 @@ def convert(rows: list[dict], refunds: dict[str, int], card: str | list[str],
         ship_values = split_date_values(r.get("Ship Date") or r.get("Order Date", ""))
         g["shipment_count"] = max(g["shipment_count"], len(ship_values))
 
-    # 3) 返金を該当注文へ充当する (発送日が新しい順 → 金額が大きい順に、0円になるまで)
-    #
-    # 1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
-    # その行だけにぶつかり、その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
-    # 返金前の金額のまま残る (= 過大計上)。使い切れなかった分は注記に出す。
-    order_groups: dict[str, list] = defaultdict(list)
-    for g in groups.values():
-        order_groups[g["oid"]].append(g)
-    for oid, refund_amt in refunds.items():
-        group_list = order_groups.get(oid)
-        if not group_list or refund_amt <= 0:
-            continue
-        ordered = sorted(group_list, key=lambda g: (g["date"], g["amount"]), reverse=True)
-        remaining = refund_amt
-        for g in ordered:
-            if remaining <= 0:
-                break
-            take = min(remaining, g["amount"])
-            if take <= 0:
-                continue
-            g["amount"] -= take
-            g["refund"] = g.get("refund", 0) + take
-            remaining -= take
-            notes.append(f"返金反映: {g['date']} -{take}円 "
-                         f"(注文 {oid}) → 実質 {g['amount']}円")
-        if remaining > 0:
-            notes.append(f"返金{refund_amt}円のうち {remaining}円は"
-                         f"差し引く明細がありません(注文 {oid})")
+    # 3) 返金を該当注文へ充当する (規則は apply_refunds 参照)
+    apply_refunds(groups, refunds, notes)
 
     # 4) Zaim 行へ整形
     out: list[list[str]] = []

@@ -234,7 +234,7 @@
    * 長すぎるものは切る(落とした情報はメモに全文が残る)。
    */
   function shortenName(raw, maxLen) {
-    const limit = maxLen || ITEM_MAX_LEN;
+    const limit = maxLen == null ? ITEM_MAX_LEN : maxLen;
     // 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
     // 閉じ括弧で止めると "【A[B]C】" で "C】" が残る
     let s = String(raw == null ? '' : raw)
@@ -257,7 +257,8 @@
    * (実機で「乳液… ほか1点」となり、消えた浄水器カートリッジが追えなかった)。
    */
   function itemLabel(names, maxLen) {
-    const budget = maxLen || ITEM_FIELD_MAX;
+    // `maxLen || 既定` にすると 0 を渡したとき黙って既定に戻る(0 は有効な予算)
+    const budget = maxLen == null ? ITEM_FIELD_MAX : maxLen;
     const counts = new Map();
     for (const raw of names || []) {
       const n = String(raw == null ? '' : raw).trim();
@@ -390,6 +391,47 @@
   }
 
   // ---------------------------------------------------------------- 変換本体
+
+  /**
+   * 返金を該当注文へ充当する(発送日が新しい順 → 金額が大きい順に、0円になるまで)。
+   *
+   * 1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
+   * その行だけにぶつかり、**その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
+   * 返金前の金額のまま残る**(= 過大計上)。使い切れなかった分は握り潰さず注記に出す。
+   *
+   * @returns {Map<string, Array<Object>>} 注文ID → グループ配列(呼び出し側でも使う)
+   */
+  function applyRefunds(groups, refunds, notes) {
+    const groupsOfOrder = new Map(); // oid → [group]
+    for (const g of groups.values()) {
+      if (!groupsOfOrder.has(g.oid)) groupsOfOrder.set(g.oid, []);
+      groupsOfOrder.get(g.oid).push(g);
+    }
+    for (const [oid, refundAmt] of Object.entries(refunds)) {
+      const list = groupsOfOrder.get(oid);
+      if (!list || refundAmt <= 0) continue;
+      const order = list
+        .slice()
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.amount - a.amount));
+      let remaining = refundAmt;
+      for (const g of order) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, g.amount);
+        if (take <= 0) continue;
+        g.amount -= take;
+        g.refund = (g.refund || 0) + take;
+        remaining -= take;
+        notes.push(`返金反映: ${g.date} -${take}円 (注文 ${oid}) → 実質 ${g.amount}円`, g.date);
+      }
+      if (remaining > 0) {
+        notes.push(
+          `返金${refundAmt}円のうち ${remaining}円は差し引く明細がありません(注文 ${oid})`,
+          order.length > 0 ? order[0].date : ''
+        );
+      }
+    }
+    return groupsOfOrder;
+  }
 
   /** 選択カード(下4桁)のいずれかを含むか。ギフト券併用表記も部分一致で拾う。 */
   function matchesCard(paymentMethodType, cards) {
@@ -545,42 +587,8 @@
       }
     }
 
-    // 3) 返金を該当注文へ充当する(発送日が新しい順 → 金額が大きい順に、0円になるまで)
-    //
-    // 1グループから全額引くと、商品ごとに行を分けたときに 1商品の額を超える返金が
-    // その行だけにぶつかり、**その行が実質マイナスで丸ごと落ちて、同じ注文の他の行が
-    // 返金前の金額のまま残る**(= 過大計上)。使い切れなかった分は握り潰さず注記に出す。
-    const groupsOfOrder = new Map(); // oid → [group]
-    for (const g of groups.values()) {
-      if (!groupsOfOrder.has(g.oid)) groupsOfOrder.set(g.oid, []);
-      groupsOfOrder.get(g.oid).push(g);
-    }
-    for (const [oid, refundAmt] of Object.entries(refunds)) {
-      const list = groupsOfOrder.get(oid);
-      if (!list || refundAmt <= 0) continue;
-      const order = list
-        .slice()
-        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.amount - a.amount));
-      let remaining = refundAmt;
-      for (const g of order) {
-        if (remaining <= 0) break;
-        const take = Math.min(remaining, g.amount);
-        if (take <= 0) continue;
-        g.amount -= take;
-        g.refund = (g.refund || 0) + take;
-        remaining -= take;
-        notes.push(
-          `返金反映: ${g.date} -${take}円 (注文 ${oid}) → 実質 ${g.amount}円`,
-          g.date
-        );
-      }
-      if (remaining > 0) {
-        notes.push(
-          `返金${refundAmt}円のうち ${remaining}円は差し引く明細がありません(注文 ${oid})`,
-          order.length > 0 ? order[0].date : ''
-        );
-      }
-    }
+    // 3) 返金を該当注文へ充当する(規則は applyRefunds 参照)
+    const groupsOfOrder = applyRefunds(groups, refunds, notes);
 
     // 4) 実請求額の手動上書き(ギフト券併用など、CSV からは復元できない差額の補正)
     //
