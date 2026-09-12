@@ -242,6 +242,17 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     'ダミー: 期間 2026-05-20〜2026-07-09'
   );
   check(await page.isVisible('#gift-warnings'), 'ダミー: ギフト券警告表示');
+
+  // 日付は nowrap なので、狭いと品目の文字とくっついて読めなくなる(実機で指摘あり)
+  const dateItemGap = await page.evaluate(() => {
+    const tr = document.querySelector('#preview-body tr');
+    const date = tr.querySelector('td.col-date');
+    const clamp = tr.querySelector('.item-clamp');
+    const range = document.createRange();
+    range.selectNodeContents(date); // セル幅ではなく、日付の文字の右端を見る
+    return Math.round(clamp.getBoundingClientRect().left - range.getBoundingClientRect().right);
+  });
+  check(dateItemGap >= 12, `日付と品目の文字が十分離れている(${dateItemGap}px)`);
   const dummyCsv = await captureCsvViaDownload(page);
   const dummyGolden = fs.readFileSync(DUMMY_GOLDEN, 'utf8');
   const da = normalize(dummyCsv);
@@ -618,6 +629,20 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   // 実機で「支出の金額の列」を 6 列目(=品目)に指定していた。人が数えると取り違えるので、
   // 出力列から機械的に導いた設定値を画面に出す。
   check(await page.isVisible('#import-section'), 'Zaimの取込手順が表示される');
+  // リンク切れ防止。/home/file は 404 だった(2026-09-12 実測)
+  const importLinks = await page.$$eval('#import-section a', (as) => as.map((a) => a.href));
+  check(
+    importLinks.includes('https://content.zaim.net/home/money'),
+    `ファイル入出力のリンクが /home/money → ${importLinks.join(' , ')}`
+  );
+  check(
+    importLinks.includes('https://content.zaim.net/auth/signin'),
+    'Zaim ログインへのリンクがある(別アカウントのままだと取込が弾かれるため)'
+  );
+  check(
+    !importLinks.some((h) => h.includes('/home/file')),
+    '404 になる /home/file を参照していない'
+  );
   const settings = await page.$$eval('#import-settings dt', (dts) =>
     dts.map((dt) => [dt.textContent, dt.nextElementSibling.textContent])
   );
@@ -810,8 +835,14 @@ async function main() {
       const wrap = document.getElementById('table-wrap');
       const table = document.getElementById('preview-table');
       const r = pick.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(date); // セル幅ではなく日付の文字の右端
+      const clamp = item.querySelector('.item-clamp');
       return {
         item: Math.round(item.getBoundingClientRect().width),
+        dateItemGap: Math.round(
+          clamp.getBoundingClientRect().left - range.getBoundingClientRect().right
+        ),
         dateOverflow: Math.round(date.scrollWidth - date.clientWidth),
         tapW: Math.round(r.width),
         tapH: Math.round(r.height),
@@ -819,6 +850,10 @@ async function main() {
       };
     });
     check(tableGeo.item >= 60, `${engineName} 320px幅でも品目列に幅が残る(${tableGeo.item}px)`);
+    check(
+      tableGeo.dateItemGap >= 12,
+      `${engineName} 320px幅でも日付と品目が離れている(${tableGeo.dateItemGap}px)`
+    );
     check(
       tableGeo.dateOverflow <= 0,
       `${engineName} 日付が列からはみ出さない(${tableGeo.dateOverflow}px)`

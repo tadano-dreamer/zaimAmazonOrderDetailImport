@@ -343,7 +343,10 @@ thead th {
 }
 tbody td { padding: 8px 10px; border-bottom: 1px solid #edf2ee; vertical-align: top; }
 tbody tr:last-child td { border-bottom: 0; }
-.col-date { width: 6.2em; white-space: nowrap; }
+/* 日付は nowrap なので、狭いと品目の文字とくっついて読めなくなる。
+   右側の余白を厚めに取って、列の境目が見えるようにする */
+.col-date { width: 6.9em; white-space: nowrap; }
+th.col-date, td.col-date { padding-right: 14px; }
 .col-amount { width: 5.5em; text-align: right; white-space: nowrap; }
 td.col-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
 
@@ -370,8 +373,9 @@ td.item-cell { overflow: hidden; }
 /* 狭い端末では、選択列を足したぶん日付・金額を詰めて品目の幅を確保する */
 @media (max-width: 420px) {
   thead th, tbody td { padding: 8px 6px; }
-  /* 6.1em 未満だと "2026-05-20" が列から溢れる(320px 幅で実測) */
-  .col-date { width: 6.1em; }
+  /* 日付が溢れず、かつ品目の文字と 14px 以上離れる幅(320px で実測して決めた) */
+  .col-date { width: 6.9em; }
+  th.col-date, td.col-date { padding-right: 12px; }
   .col-amount { width: 4.8em; }
 }
 
