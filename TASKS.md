@@ -10,8 +10,8 @@
 # ============================================================================
 
 project: zaim-amazon-import      # ★必須。manager 側の id。変えない
-updated_at: 2026-09-15T23:07:00+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
-mode: summary                    # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
+updated_at: 2026-09-15T23:41:58+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
+mode: issues_only                # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
 health: green                    # ★必須。green | yellow | red
 phase: 実装と実機 Zaim への取込テストまで完了し、実データを月ごとに取り込む運用段階   # ★必須
 next_action: 実データの Your Orders.zip から月ごとに CSV を出して Zaim に本番取込する   # ★必須。manager が「今日やること」に使う
@@ -24,8 +24,20 @@ manager_ack:
 
 # 未完のものだけ。完了したら消して recently_closed へ移す。
 # 🔴 20件以内。全部を載せない（I-15）。載せる基準は下の「何を載せるか」。
-# mode: summary のときは空リスト [] でよい。
-open_tasks: []
+# 🔴 このリポジトリは public。タスク名や done_when に実データの値を書かない（CLAUDE.md の留意事項）。
+open_tasks:
+  - id: zaim-amazon-import-001
+    title: 公開中の README と docs にある実データ由来の値（商品名・金額・カード下4桁）を消すか決める
+    status: ready
+    priority: middle
+    due: null
+    due_kind: none
+    owner: 自分
+    blocked_by: null
+    blocked_reason: null
+    waiting_for: null
+    done_when: 残すか消すかを決めた。消す場合は該当箇所を集計値かダミーに置き換えてコミットした
+    ref: CLAUDE.md の公開リポジトリとしてのセキュリティ留意事項 / README.md / docs/IMPLEMENTATION.md §9・§11
 # 1件の書き方（載せるときはこの形。★は必須）:
 #   - id: zaim-amazon-import-001   # ★ <project>-NNN。採番はこのプロジェクトが持つ
 #     title: タスクの内容を1行で      # ★
@@ -56,10 +68,14 @@ recently_closed: []
 - 2026-09-12 にダミー6行で実機 Zaim への取込テストに成功（`docs/IMPLEMENTATION.md` §11-10）。
 - **実データを Zaim へ本番取込した記録は、リポジトリにはまだ無い。** 取り込んだら `next_action` を更新する。
 
-### `open_tasks` を空にしている理由
+### `open_tasks` に載せているもの・載せていないもの
 
-期限のある残作業も、他を止めているブロッカーも無い。台帳に残っている未完の事項は次のとおりで、
-いずれも期限なし・他を止めていないため `TASKS.md` には載せず、元の台帳に置いたままにしている。
+**載せている**: `zaim-amazon-import-001`（公開済みの値を消すかの判断）。期限もなくブロッカーでもないが、
+User の判断待ちで、会話に書いただけでは manager に届かないため、2026-09-15 に User の依頼で載せた。
+消しても git の履歴には残る点も判断材料にする。
+
+**載せていない**: 台帳に残っている次の未完事項。いずれも期限なし・他を止めていないため
+`TASKS.md` には載せず、元の台帳に置いたままにしている。
 
 | 未完の事項 | 台帳 |
 |---|---|
