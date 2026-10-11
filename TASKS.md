@@ -10,7 +10,7 @@
 # ============================================================================
 
 project: zaim-amazon-import      # ★必須。manager 側の id。変えない
-updated_at: 2026-09-27T06:42:11+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
+updated_at: 2026-10-12T06:41:22+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
 mode: issues_only                # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
 health: green                    # ★必須。green | yellow | red
 phase: 実装と実機 Zaim への取込テストまで完了し、実データを月ごとに取り込む運用段階   # ★必須
@@ -23,6 +23,8 @@ manager_ack:
   - { id: m-20260913-03, effect: TASKS.md をルート直下に作成しコミット }
   - { id: m-20260922-03, effect: "open_tasks の status に inbox を使っていないことを確認した（既存の zaim-amazon-import-001 は ready のまま変更なし）" }
   - { id: m-20260926-01, effect: "接頭辞が揃っていることを確認（影響なし）" }
+  - { id: m-20261011-01, effect: zaim-amazon-import-001 の due を 2026-10-15・due_kind を soft にした }
+  - { id: m-20260922-04, effect: m-20261011-01 で反映済み }
 
 # 未完のものだけ。完了したら消して recently_closed へ移す。
 # 🔴 20件以内。全部を載せない（I-15）。載せる基準は下の「何を載せるか」。
@@ -32,8 +34,8 @@ open_tasks:
     title: 公開中の README と docs にある実データ由来の値（商品名・金額・カード下4桁）を消すか決める
     status: ready
     priority: middle
-    due: null
-    due_kind: none
+    due: 2026-10-15
+    due_kind: soft
     owner: 自分
     blocked_by: null
     blocked_reason: null
