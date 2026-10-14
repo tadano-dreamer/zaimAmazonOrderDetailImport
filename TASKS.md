@@ -10,11 +10,11 @@
 # ============================================================================
 
 project: zaim-amazon-import      # ★必須。manager 側の id。変えない
-updated_at: 2026-10-12T06:41:22+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
+updated_at: 2026-10-14T17:05:00+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
 mode: issues_only                # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
 health: green                    # ★必須。green | yellow | red
 phase: 実装と実機 Zaim への取込テストまで完了し、実データを月ごとに取り込む運用段階   # ★必須
-next_action: 実データの Your Orders.zip から月ごとに CSV を出して Zaim に本番取込する   # ★必須。manager が「今日やること」に使う
+next_action: 10月分を翌月に CSV にして Zaim に取り込む（9月分は取込済み・以降は月次）   # ★必須。manager が「今日やること」に使う
 
 # manager からの依頼に対応したら、ここに積む（manager の state/outbox/zaim-amazon-import.md を参照）
 # 🔴 id だけ書いて effect を省かない。「見た」ではなく「やった」の証拠を書く（I-5）。
@@ -68,9 +68,10 @@ recently_closed: []
 ここから下は**人間用**。manager は読みません（機械可読部は上の frontmatter だけ）。
 
 - Web アプリは GitHub Pages で公開済み（URL は `README.md`）。
-- 2026-09-15 時点で単体テスト 98件が緑。Pages のデプロイは直近3回（2026-09-12）とも成功。
+- 2026-10-14 時点で単体テスト 102件が緑。同日 main へ反映し、Pages のデプロイも成功。
 - 2026-09-12 にダミー6行で実機 Zaim への取込テストに成功（`docs/IMPLEMENTATION.md` §11-10）。
-- **実データを Zaim へ本番取込した記録は、リポジトリにはまだ無い。** 取り込んだら `next_action` を更新する。
+- **2026-10-14 に実データの9月分を Zaim へ本番取込し、動作を確認した**（User 報告）。以降は月次運用。
+- 同日、品目の要約化・メモの商品名箇条書き・期間先行のカード選択を反映（`docs/IMPLEMENTATION.md` §12・§13）。
 
 ### `open_tasks` に載せているもの・載せていないもの
 
@@ -83,10 +84,9 @@ User の判断待ちで、会話に書いただけでは manager に届かない
 
 | 未完の事項 | 台帳 |
 |---|---|
-| Zaim の「品目」欄の文字数上限が未確認（安全側の60文字で運用中。52文字までは実機で通過） | `docs/IMPLEMENTATION.md` §11-7 |
 | Zaim 側の記録漏れ1件（2,569円）の取込（2026-09-06 の突合時点。取り込んだかの記録なし） | `docs/IMPLEMENTATION.md` §9-5 |
 | ともEPOS の Amazon 購入は別アカウント。取り込むならそのアカウントでデータのリクエストが要る | `docs/IMPLEMENTATION.md` §9-7 |
-| 将来拡張（PWA 化・共有メニューから ZIP を受け取る・前回設定の記憶）。任意 | `docs/IMPLEMENTATION.md` §4 Phase 4 |
+| 将来拡張（PWA 化・共有メニューから ZIP を受け取る。カード選択の記憶は 2026-10-14 に実装済み）。任意 | `docs/IMPLEMENTATION.md` §4 Phase 4 |
 | Zaim 公式 API での直接登録の調査。スコープ外（やるなら別 PLAN） | `docs/PLAN_ITEM_MEMO_SELECTION.md` §4-1 |
 
 期限が付いたり、どれかが他の作業を止めるようになったら `open_tasks` に移し、`mode` を見直す。
