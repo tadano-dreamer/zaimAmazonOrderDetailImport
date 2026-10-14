@@ -791,7 +791,10 @@
   function memoNameLines(names, budget) {
     const counts = new Map();
     for (const raw of names || []) {
-      const n = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+      // 宣伝ブロック(【まとめ買い】等)は落とす。100文字しか無いので商品名そのものに回す
+      const all = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+      const n =
+        all.replace(/【[^】]*】|［[^］]*］|\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim() || all;
       counts.set(n, (counts.get(n) || 0) + 1);
     }
     const lines = [...counts.entries()].map(([n, c]) => `${MEMO_BULLET}${n}${c > 1 ? `×${c}` : ''}`);
@@ -827,7 +830,7 @@
   /**
    * メモ欄。**Zaim の上限(100文字)を必ず守る**。
    *
-   * 既定(full)は商品名(省略なし)の箇条書き+注記+注文ID。品目欄は一覧で切れない
+   * 既定(full)は商品名(省略なし)の箇条書き+注記。品目欄は一覧で切れない
    * 要約にしたので、何を買ったかの全文はメモが持つ。notes は注記と注文IDだけ。
    * 注記を残すのは、あとからカード明細と突合するときに要るため:
    *   返金/ギフト券/複数出荷 = 注文額とカード請求額が違う理由、注文ID = Amazon 側を引くキー。
@@ -849,7 +852,8 @@
     if (info.shipmentCount > 1) {
       notes.push(`${info.shipmentCount}回に分けて出荷(カード明細では分割計上のことあり)`);
     }
-    if (info.oid) notes.push(`注文 ${info.oid}`);
+    // 注文IDは notes のときだけ。full は商品名に文字数を回す(注文IDは使わないとの判断・2026-10-14)
+    if (info.oid && mode === 'notes') notes.push(`注文 ${info.oid}`);
 
     const tail = truncate(notes.filter((x) => x).join(MEMO_JOIN), FIELD_MAX_LEN);
     if (mode === 'notes') return tail;

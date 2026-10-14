@@ -175,11 +175,11 @@ check(
 );
 const longMemo = longRow ? longRow[core.COL.memo].split('\n') : [];
 check(
-  longMemo.length === 3 &&
+  longMemo.length === 2 &&
     longMemo[0].startsWith('・') && longMemo[0].includes('乳液') &&
     longMemo[1].startsWith('・') && longMemo[1].includes('浄水器') &&
-    longMemo[2] === '注文 503-1000012-0000122',
-  `既定のメモは商品名の箇条書き+注文ID → ${JSON.stringify(longMemo)}`
+    !longRow[core.COL.memo].includes('…'),
+  `既定のメモは商品名の箇条書き(注文IDなし・2品とも全文) → ${JSON.stringify(longMemo)}`
 );
 check(
   charLen(longRow[core.COL.memo]) <= core.FIELD_MAX_LEN,

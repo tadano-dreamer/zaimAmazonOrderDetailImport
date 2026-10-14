@@ -155,8 +155,8 @@ test('convert: 同一注文・同一発送日は合算(477+1180=1657)', () => {
   assert.equal(a[8], '1657');
   // 品目には予算いっぱいまで商品名を並べる(「ほか1点」で中身が消えない)
   assert.equal(a[7], '紙コップ / シート');
-  // 既定のメモは商品名の箇条書き+注文ID
-  assert.equal(a[3], '・紙コップ\n・シート\n注文 A');
+  // 既定のメモは商品名の箇条書き(注文IDは入れない)
+  assert.equal(a[3], '・紙コップ\n・シート');
   assert.equal(a[0], '2026-06-30');
 });
 
@@ -883,12 +883,12 @@ test('convert: memo=notes なら注記と注文IDだけ', () => {
   assert.equal(a[COL.memo], '注文 A');
 });
 
-test('convert: 既定(full)は商品名の箇条書き+注文ID / memo=none なら空欄', () => {
+test('convert: 既定(full)は商品名の箇条書き(注文IDなし) / memo=none なら空欄', () => {
   const { COL, DEFAULT_OPTIONS } = require('./core.js');
   assert.equal(DEFAULT_OPTIONS.memo, 'full');
   const full = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   const a = full.rows.find((r) => r[COL.item].includes('紙コップ'));
-  assert.equal(a[COL.memo], '・紙コップ\n・シート\n注文 A');
+  assert.equal(a[COL.memo], '・紙コップ\n・シート');
 
   const none = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'none' });
   assert.ok(none.rows.every((r) => r[COL.memo] === ''), 'memo=none で空欄にならない行がある');
@@ -1064,7 +1064,8 @@ test('convert: 長い2品は品目を要約し、メモの箇条書きで両方�
   const lines = row[COL.memo].split('\n');
   assert.ok(lines[0].startsWith('・') && lines[0].includes('乳液'), row[COL.memo]);
   assert.ok(lines[1].startsWith('・') && lines[1].includes('浄水器'), row[COL.memo]);
-  assert.equal(lines[lines.length - 1], '注文 503-1000012-0000122');
+  assert.equal(lines.length, 2, row[COL.memo]); // 注文IDは入れない(使わないため)
+  assert.ok(!row[COL.memo].includes('…'), row[COL.memo]); // 注文IDのぶん、2品とも全文が入る
   // 実機で赤字になった 100 文字の上限は守る
   assert.ok(charLen(row[COL.memo]) <= FIELD_MAX_LEN, row[COL.memo]);
 });
@@ -1076,7 +1077,8 @@ test('buildMemo: 入りきらない商品は「・ほかN点」に畳み、100�
       const names = Array.from({ length: n }, (_, i) => `${i}${'あ'.repeat(len)}`);
       const memo = buildMemo(names, { memo: 'full', oid: '503-0000000-0000000', refund: 100 });
       assert.ok(charLen(memo) <= FIELD_MAX_LEN, `${n}品×${len}字: ${charLen(memo)}字`);
-      assert.ok(memo.endsWith('返金100円を差引済み\n注文 503-0000000-0000000'), memo);
+      assert.ok(memo.endsWith('返金100円を差引済み'), memo);
+      assert.ok(!memo.includes('503-0000000'), memo);
       const shown = memo.split('\n').filter((l) => l.startsWith('・') && !/^・ほか\d+点$/.test(l));
       const rest = memo.match(/^・ほか(\d+)点$/m);
       assert.equal(shown.length + (rest ? Number(rest[1]) : 0), n, memo);
@@ -1105,7 +1107,7 @@ test('convert: memo=full で注記3種(返金・ギフト券・分割出荷)が�
   assert.ok(memo.includes('返金500円を差引済み'), memo);
   assert.ok(memo.includes('ギフト券併用'), memo);
   assert.ok(memo.includes('2回に分けて出荷'), memo);
-  assert.ok(memo.includes('注文 T'), memo);
+  assert.ok(!memo.includes('注文 T'), memo); // full は注文IDを入れない
 });
 
 // --------------------------------------------------- §9-5 商品ごとに1行(splitByItem)

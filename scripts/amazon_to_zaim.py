@@ -237,7 +237,9 @@ def memo_name_lines(names: list[str], budget: int) -> list[str]:
     """
     counts: dict[str, int] = {}
     for n in names:
-        n = re.sub(r"\s+", " ", n or "").strip()
+        # 宣伝ブロック(【まとめ買い】等)は落とす。100文字しか無いので商品名そのものに回す
+        full = re.sub(r"\s+", " ", n or "").strip()
+        n = re.sub(r"\s+", " ", re.sub(r"【[^】]*】|［[^］]*］|\[[^\]]*\]", " ", full)).strip() or full
         counts[n] = counts.get(n, 0) + 1
     lines = [f"{MEMO_BULLET}{n}" + (f"×{c}" if c > 1 else "") for n, c in counts.items()]
 
@@ -275,7 +277,7 @@ def build_memo(names: list[str], oid: str = "", refund: int = 0,
                mode: str = DEFAULT_MEMO_MODE) -> str:
     """メモ欄。Zaim の上限 (100文字) を必ず守る。
 
-    既定 (full) は商品名 (省略なし) の箇条書き + 注記 + 注文ID。品目欄は要約なので
+    既定 (full) は商品名 (省略なし) の箇条書き + 注記。品目欄は要約なので
     全文はメモが持つ。notes は注記と注文IDだけ。注記を残すのは、あとから
     カード明細と突合するときに要るため (注文額と請求額が違う理由・Amazon 側を引くキー)。
     full のときは注記を先に確保してから残り枠に商品名を入れる。商品名を先に詰めると
@@ -300,7 +302,8 @@ def build_memo(names: list[str], oid: str = "", refund: int = 0,
         notes.append("ギフト券併用のため実請求額と差がある可能性あり")
     if shipment_count > 1:
         notes.append(f"{shipment_count}回に分けて出荷(カード明細では分割計上のことあり)")
-    if oid:
+    # 注文IDは notes のときだけ。full は商品名に文字数を回す
+    if oid and mode == "notes":
         notes.append(f"注文 {oid}")
 
     tail = truncate(MEMO_JOIN.join(p for p in notes if p), FIELD_MAX_LEN)
@@ -494,7 +497,7 @@ def main() -> None:
                     help="同じ支払いでも商品ごとに行を分ける (Zaim 上は別レコードになる。"
                          "カード明細との1:1突合は崩れるが合計は変わらない)")
     ap.add_argument("--memo", default=DEFAULT_MEMO_MODE, choices=list(MEMO_MODES),
-                    help="メモ欄の中身 (既定 full=商品名の箇条書き+注記+注文ID / "
+                    help="メモ欄の中身 (既定 full=商品名の箇条書き+注記 / "
                          "notes=注記と注文IDのみ / none=空欄)。いずれも100文字で必ず切る")
     ap.add_argument("--out", default=None, help="出力ファイル名 (既定: zaim_import_<card>.csv)")
     args = ap.parse_args()
