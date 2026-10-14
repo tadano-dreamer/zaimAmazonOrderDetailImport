@@ -113,7 +113,7 @@ function makeData(seed) {
 
 const MODES = [
   { label: '既定', cli: [], js: {} },
-  { label: 'memo=full', cli: ['--memo', 'full'], js: { memo: 'full' } },
+  { label: 'memo=notes', cli: ['--memo', 'notes'], js: { memo: 'notes' } },
   { label: 'memo=none', cli: ['--memo', 'none'], js: { memo: 'none' } },
   { label: '商品ごとに1行', cli: ['--split-items'], js: { splitByItem: true } },
   { label: '明細ごと', cli: ['--no-aggregate'], js: { aggregate: false } },

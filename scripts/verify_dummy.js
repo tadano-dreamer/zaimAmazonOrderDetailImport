@@ -89,7 +89,7 @@ const giftRefundRow = newCard.rows.find((r) => r[core.COL.date] === '2026-07-24'
 check(
   giftRefundRow[core.COL.memo].includes('返金300円を差引済み') &&
     giftRefundRow[core.COL.memo].includes('ギフト券併用'),
-  `返金とギフト券併用の注記が両方出る → ${giftRefundRow[core.COL.memo].slice(0, 70)}`
+  `返金とギフト券併用の注記が両方出る → ${JSON.stringify(giftRefundRow[core.COL.memo])}`
 );
 check(
   newCard.notes.some((n) => n.includes('分割計上')),
@@ -163,25 +163,27 @@ for (const [label, opt] of [
   );
 }
 
-// D012: 実機で「乳液… ほか1点」となり、もう1品が何なのか分からなかったケース
+// D012: 実機で「乳液… ほか1点」となり、もう1品が何なのか分からなかったケース。
+// 品目は1行に収まる要約にし、2品とも名前はメモの箇条書きで分かるようにする
 const longRow = rows.find((r) => r[core.COL.date] === '2026-06-05');
 check(
   longRow &&
     longRow[core.COL.item].includes('乳液') &&
-    longRow[core.COL.item].includes('浄水器') &&
-    !longRow[core.COL.item].includes('ほか'),
-  `長い2品の注文は品目に両方出る → ${longRow ? longRow[core.COL.item] : 'なし'}`
+    charLen(longRow[core.COL.item]) <= core.ITEM_FIELD_MAX &&
+    !longRow[core.COL.item].includes('…'),
+  `長い2品の注文は品目が要約になる → ${longRow ? longRow[core.COL.item] : 'なし'}`
+);
+const longMemo = longRow ? longRow[core.COL.memo].split('\n') : [];
+check(
+  longMemo.length === 3 &&
+    longMemo[0].startsWith('・') && longMemo[0].includes('乳液') &&
+    longMemo[1].startsWith('・') && longMemo[1].includes('浄水器') &&
+    longMemo[2] === '注文 503-1000012-0000122',
+  `既定のメモは商品名の箇条書き+注文ID → ${JSON.stringify(longMemo)}`
 );
 check(
-  longRow && longRow[core.COL.memo] === '注文 503-1000012-0000122',
-  `既定のメモは注記と注文IDだけ → ${longRow ? longRow[core.COL.memo] : 'なし'}`
-);
-const longFull = core.convert(orderRows, refundRows, { memo: 'full' }).rows.find(
-  (r) => r[core.COL.date] === '2026-06-05'
-);
-check(
-  charLen(longFull[core.COL.memo]) <= core.FIELD_MAX_LEN,
-  `memo=full でも 100 文字以内に収まる → ${charLen(longFull[core.COL.memo])}字`
+  charLen(longRow[core.COL.memo]) <= core.FIELD_MAX_LEN,
+  `箇条書きでも 100 文字以内に収まる → ${charLen(longRow[core.COL.memo])}字`
 );
 
 // --- 商品ごとに1行(splitByItem)------------------------------------------
@@ -226,7 +228,7 @@ check(
 // JS と Python は別々に書いた同じロジックなので、切り詰めの計算が1文字ずれただけでも
 // 出力が食い違う。モードごとにゴールデンを持って機械的に突き合わせる。
 for (const [label, opt, goldenPath] of [
-  ['memo=full', { memo: 'full' }, path.join(BASE, 'output', 'zaim_import_5171_full.csv')],
+  ['memo=notes', { memo: 'notes' }, path.join(BASE, 'output', 'zaim_import_5171_notes.csv')],
   ['商品ごとに1行', { splitByItem: true }, path.join(BASE, 'output', 'zaim_import_5171_split.csv')],
 ]) {
   const js = toLines(core.generateCsv(core.convert(orderRows, refundRows, opt).rows));

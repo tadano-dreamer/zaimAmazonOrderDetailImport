@@ -155,8 +155,8 @@ test('convert: 同一注文・同一発送日は合算(477+1180=1657)', () => {
   assert.equal(a[8], '1657');
   // 品目には予算いっぱいまで商品名を並べる(「ほか1点」で中身が消えない)
   assert.equal(a[7], '紙コップ / シート');
-  // 既定のメモは注記と注文IDだけ(商品名は品目欄が持つ)
-  assert.equal(a[3], '注文 A');
+  // 既定のメモは商品名の箇条書き+注文ID
+  assert.equal(a[3], '・紙コップ\n・シート\n注文 A');
   assert.equal(a[0], '2026-06-30');
 });
 
@@ -800,12 +800,29 @@ test('shortenName: 括弧が閉じない・全部が装飾・空文字でも壊�
   assert.equal(shortenName(undefined), '');
 });
 
-test('shortenName: 長い名前は切り詰めて … を付ける', () => {
-  const s = 'あ'.repeat(40);
-  const out = shortenName(s);
-  assert.equal(Array.from(out).length, 25); // 24文字 + …
-  assert.ok(out.endsWith('…'));
+test('shortenName: 長い名前は24文字以内に要約し、… を付けない', () => {
+  const out = shortenName('あ'.repeat(40));
+  assert.equal(out, 'あ'.repeat(24)); // 区切りが無ければ文字で切る
   assert.equal(shortenName('あ'.repeat(24)), 'あ'.repeat(24)); // ちょうどは切らない
+});
+
+test('shortenName: 丸括弧の補足を落とし、単語の区切りで切る(実機で「ラ…」と切れた形)', () => {
+  assert.equal(
+    shortenName('サンプル (sample) 洗濯かごバスケット 折りたたみ 大容量 45L 持ち手付き'),
+    'サンプル 洗濯かごバスケット 折りたたみ 大容量'
+  );
+  // 収まるなら括弧も残す(情報を無駄に落とさない)
+  assert.equal(shortenName('シャンプー (無香料)'), 'シャンプー (無香料)');
+  // limit 文字目の直後が区切りなら、ちょうど limit 文字で切れる
+  assert.equal(shortenName(`${'あ'.repeat(24)} いい`), 'あ'.repeat(24));
+  // 区切りが手前すぎる(SUMMARY_MIN_LEN 未満)なら文字で切る
+  assert.equal(shortenName(`あ ${'い'.repeat(30)}`), `あ ${'い'.repeat(22)}`);
+  // 末尾に区切り記号を残さない
+  assert.equal(shortenName(`${'あ'.repeat(20)}、 ${'い'.repeat(10)}`), 'あ'.repeat(20));
+  for (const name of ['あ'.repeat(40), `A ${'B'.repeat(50)}`, '(x)'.repeat(20)]) {
+    const out = shortenName(name);
+    assert.ok(Array.from(out).length <= 24 && !out.endsWith('…'), out);
+  }
 });
 
 test('shortenName: サロゲートペアを分断しない(CSVに � が混ざらない)', () => {
@@ -828,11 +845,16 @@ test('itemLabel: 1種類はそのまま、同名は ×N、複数種類は予算�
 
 test('itemLabel: 予算を超える分だけ「ほかN点」に畳む(全体は予算内)', () => {
   const { ITEM_FIELD_MAX } = require('./core.js');
-  const names = ['あ'.repeat(24), 'い'.repeat(24), 'う'.repeat(24), 'え'.repeat(24)];
+  const names = ['あいう', 'かきく', 'さしす', 'たちつ', 'なにぬ', 'はひふ'];
   const out = itemLabel(names);
   assert.ok(Array.from(out).length <= ITEM_FIELD_MAX, `${out} (${Array.from(out).length}字)`);
-  assert.ok(out.includes('あ') && out.includes('い'), out); // 入るだけ並べる
-  assert.ok(/ ほか2点$/.test(out), out); // 残りは点数で示す
+  assert.equal(out, 'あいう / かきく / さしす ほか3点'); // 入るだけ並べ、残りは点数で示す
+});
+
+test('itemLabel: 1件目が長いときは要約を縮めて「ほかN点」を付ける(… で切らない)', () => {
+  const out = itemLabel(['あ'.repeat(40), 'い'.repeat(40)]);
+  assert.equal(out, `${'あ'.repeat(19)} ほか1点`);
+  assert.equal(itemLabel(['あ'.repeat(40), 'あ'.repeat(40)]), `${'あ'.repeat(22)}×2`);
 });
 
 test('itemLabel: 「ほかN点」を足して予算を超えるなら、その1件は並べない', () => {
@@ -854,18 +876,19 @@ test('itemLabel: 予算を指定できる(Zaim 側の上限が判明したら定
 });
 
 // ------------------------------------------------------------------- メモ
-test('convert: 既定のメモは注記と注文IDだけ(商品名は品目欄が持つ)', () => {
-  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
+test('convert: memo=notes なら注記と注文IDだけ', () => {
+  const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'notes' });
   const { COL } = require('./core.js');
   const a = rows.find((r) => r[COL.item].includes('紙コップ'));
   assert.equal(a[COL.memo], '注文 A');
 });
 
-test('convert: memo=full なら全商品名も入る / memo=none なら空欄', () => {
-  const { COL } = require('./core.js');
-  const full = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'full' });
+test('convert: 既定(full)は商品名の箇条書き+注文ID / memo=none なら空欄', () => {
+  const { COL, DEFAULT_OPTIONS } = require('./core.js');
+  assert.equal(DEFAULT_OPTIONS.memo, 'full');
+  const full = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   const a = full.rows.find((r) => r[COL.item].includes('紙コップ'));
-  assert.equal(a[COL.memo], '紙コップ / シート / 注文 A');
+  assert.equal(a[COL.memo], '・紙コップ\n・シート\n注文 A');
 
   const none = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...DEFAULTS, memo: 'none' });
   assert.ok(none.rows.every((r) => r[COL.memo] === ''), 'memo=none で空欄にならない行がある');
@@ -1030,16 +1053,35 @@ test('convert: 全出力行の品目が予算以下(1件抜き取りでは長い
   }
 });
 
-test('convert: 長い2品でも品目に両方の名前が出る(「ほか1点」の退行検知)', () => {
-  const { COL } = require('./core.js');
+test('convert: 長い2品は品目を要約し、メモの箇条書きで両方の名前が分かる', () => {
+  const { COL, FIELD_MAX_LEN, ITEM_FIELD_MAX } = require('./core.js');
   const { rows } = convert(LONG_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   const row = rows.find((r) => r[COL.date] === '2026-06-05');
   assert.ok(row, '対象行が無い');
   assert.ok(row[COL.item].includes('乳液'), row[COL.item]);
-  assert.ok(row[COL.item].includes('浄水器'), row[COL.item]);
-  assert.ok(!row[COL.item].includes('ほか'), row[COL.item]);
-  // 実機で赤字になったメモは、既定では注文IDだけになる
-  assert.equal(row[COL.memo], '注文 503-1000012-0000122');
+  assert.ok(row[COL.item].endsWith(' ほか1点'), row[COL.item]);
+  assert.ok(charLen(row[COL.item]) <= ITEM_FIELD_MAX, row[COL.item]);
+  const lines = row[COL.memo].split('\n');
+  assert.ok(lines[0].startsWith('・') && lines[0].includes('乳液'), row[COL.memo]);
+  assert.ok(lines[1].startsWith('・') && lines[1].includes('浄水器'), row[COL.memo]);
+  assert.equal(lines[lines.length - 1], '注文 503-1000012-0000122');
+  // 実機で赤字になった 100 文字の上限は守る
+  assert.ok(charLen(row[COL.memo]) <= FIELD_MAX_LEN, row[COL.memo]);
+});
+
+test('buildMemo: 入りきらない商品は「・ほかN点」に畳み、100文字を必ず守る', () => {
+  const { buildMemo, FIELD_MAX_LEN } = require('./core.js');
+  for (let n = 1; n <= 12; n++) {
+    for (const len of [3, 20, 60, 120]) {
+      const names = Array.from({ length: n }, (_, i) => `${i}${'あ'.repeat(len)}`);
+      const memo = buildMemo(names, { memo: 'full', oid: '503-0000000-0000000', refund: 100 });
+      assert.ok(charLen(memo) <= FIELD_MAX_LEN, `${n}品×${len}字: ${charLen(memo)}字`);
+      assert.ok(memo.endsWith('返金100円を差引済み\n注文 503-0000000-0000000'), memo);
+      const shown = memo.split('\n').filter((l) => l.startsWith('・') && !/^・ほか\d+点$/.test(l));
+      const rest = memo.match(/^・ほか(\d+)点$/m);
+      assert.equal(shown.length + (rest ? Number(rest[1]) : 0), n, memo);
+    }
+  }
 });
 
 // ------------------------------------------------------- §9-3 注記が消えないこと

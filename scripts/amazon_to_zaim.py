@@ -23,7 +23,7 @@ Zaim インポート用 CSV
     python amazon_to_zaim.py --zip "Your Orders.zip"  # ZIP から解凍してから処理
     python amazon_to_zaim.py --no-aggregate        # 合算せず明細1行=1エントリ(旧挙動)
     python amazon_to_zaim.py --split-items         # 同じ支払いでも商品ごとに1行
-    python amazon_to_zaim.py --memo full           # メモに全商品名も入れる(既定は注記のみ)
+    python amazon_to_zaim.py --memo notes          # メモを注記と注文IDだけにする(既定は商品名の箇条書き)
     python amazon_to_zaim.py --subcategory ともかAmazon   # 内訳を切替 (支払元も ともEPOS に)
 
 注意: カード下4桁1つで絞ると、カード更新・再発行で番号が変わった時点以降が
@@ -57,7 +57,7 @@ SUBCATEGORY_CHOICES = list(SUBCATEGORY_SOURCES)
 DEFAULT_SUBCATEGORY = SUBCATEGORY_CHOICES[0]
 DEFAULT_STORE = "Amazon"                    # Zaim お店
 DEFAULT_TZ = "jst"                          # 計上日のタイムゾーン (jst / utc)
-DEFAULT_MEMO_MODE = "notes"                 # メモ欄の中身 (notes / none / full)
+DEFAULT_MEMO_MODE = "full"                  # メモ欄の中身 (full / notes / none)
 
 JST = timezone(timedelta(hours=9))          # 日本時間
 
@@ -69,15 +69,18 @@ REFUND_CSV_REL = Path("Your Orders") / "Your Returns & Refunds" / "Refund Detail
 ZAIM_HEADER = ["日付", "カテゴリ", "カテゴリの内訳", "メモ", "お店",
                "支払元", "入金先", "品目", "支出金額"]
 COL_AMOUNT = 8                              # ZAIM_HEADER 内の支出金額の位置(0始まり)
-ITEM_MAX_LEN = 24                           # 1商品あたりの見出し長
+ITEM_MAX_LEN = 24                           # 品目の要約の長さ (Zaim の詳細画面で1行に収まる)
 # Zaim の1項目に入る最大文字数。実機のメモ欄で 100文字超が赤字になり保存できなかった。
 FIELD_MAX_LEN = 100
-# 品目欄の予算。Zaim 側の上限は未確認なので安全側 (24文字×2 + 「ほかN点」が収まる)。
-ITEM_FIELD_MAX = 60
-MEMO_MODES = ("notes", "none", "full")
+# 品目欄全体の予算。複数商品でも1行に収まるよう要約と同じ長さ (全商品名はメモに残る)。
+ITEM_FIELD_MAX = ITEM_MAX_LEN
+MEMO_MODES = ("full", "notes", "none")
+SUMMARY_MIN_LEN = 8                         # 要約で単語の区切りを使う最小長
+MEMO_LINE_MIN_LEN = 8                       # メモの箇条書きで切ってでも残す最小長
 NON_PURCHASE_STATUSES = {"Cancelled", "Canceled"}
 ITEM_JOIN = " / "                           # 複数商品をまとめる際の区切り
-MEMO_JOIN = " / "
+MEMO_JOIN = "\n"                            # メモは箇条書き (CSV ではクオートされる)
+MEMO_BULLET = "・"
 
 
 def unzip_if_needed(base_dir: Path, zip_name: str | None) -> None:
@@ -163,45 +166,107 @@ def truncate(text: str, max_len: int) -> str:
 
 
 def shorten_name(raw: str, max_len: int = ITEM_MAX_LEN) -> str:
-    """商品名を家計簿で読める見出しに整える(宣伝ブロックを落として詰める)。"""
+    """商品名を家計簿の一覧で切れずに読める要約にする (max_len 文字以内・… を付けない)。
+
+    宣伝ブロック → 丸括弧の補足の順に落とし、それでも長ければ単語の区切り (空白) で切る。
+    省いた部分はメモ欄に全文が残る (build_memo の full)。
+    """
+    def tidy(x: str) -> str:
+        return re.sub(r"\s+", " ", x).strip()
     # 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
     # 閉じ括弧で止めると "【A[B]C】" で "C】" が残る
-    s = re.sub(r"【[^】]*】|［[^］]*］|\[[^\]]*\]", " ", raw or "")
-    s = re.sub(r"\s+", " ", s).strip()
+    s = tidy(re.sub(r"【[^】]*】|［[^］]*］|\[[^\]]*\]", " ", raw or ""))
     if not s:
         s = (raw or "").strip()
     # Python の str はコードポイント単位なので JS の Array.from と同じ数え方になる
     # (JS の slice はコード単位で、絵文字を分断して壊す)
-    return s if len(s) <= max_len else s[:max_len].strip() + "…"
+    if len(s) <= max_len:
+        return s
+    no_paren = tidy(re.sub(r"\([^()]*\)|（[^（）]*）", " ", s))
+    if no_paren:
+        s = no_paren
+    if len(s) <= max_len:
+        return s
+    # max_len 文字目の直後が空白なら、max_len 文字ちょうどが単語の切れ目
+    cut = s[:max_len + 1].rfind(" ")
+    end = cut if cut >= SUMMARY_MIN_LEN else max_len
+    return re.sub(r"[\s,、・/\-]+$", "", s[:end])
 
 
 def item_label(names: list[str], max_len: int = ITEM_FIELD_MAX) -> str:
-    """商品名リスト → 品目欄の1行。同名は ×N。
+    """商品名リスト → 品目欄の1行 (max_len 文字以内)。同名は ×N。
 
-    予算いっぱいまで商品名を並べ、入りきらない分だけ「ほかN点」に畳む。先頭1件だけ
-    出して「ほか1点」にすると、何を買ったのか家計簿から分からなくなる。
+    予算いっぱいまで商品名の要約を並べ、入りきらない分だけ「ほかN点」に畳む。
+    「ほかN点」を付けると1件目が入りきらないときは、1件目の要約をその分だけ短くする。
     """
     counts: dict[str, int] = {}
     for n in names:
         n = (n or "").strip()
         counts[n] = counts.get(n, 0) + 1
-    labels = [shorten_name(n) + (f"×{c}" if c > 1 else "") for n, c in counts.items()]
-    if not labels:
+    entries = list(counts.items())
+    if not entries:
         return ""
 
-    text = labels[0]
+    def label(entry: tuple[str, int], max_chars: int) -> str:
+        n, c = entry
+        suffix = f"×{c}" if c > 1 else ""
+        return shorten_name(n, max(max_chars - len(suffix), 0)) + suffix
+
+    text = label(entries[0], min(ITEM_MAX_LEN, max_len))
     shown = 1
-    for i in range(1, len(labels)):
-        candidate = f"{text}{ITEM_JOIN}{labels[i]}"
-        rest = len(labels) - i - 1
+    for i in range(1, len(entries)):
+        candidate = f"{text}{ITEM_JOIN}{label(entries[i], ITEM_MAX_LEN)}"
+        rest = len(entries) - i - 1
         # 「ほかN点」を付けた瞬間に予算を超えないよう、先に足して判定する
         tail = f" ほか{rest}点" if rest > 0 else ""
         if len(candidate + tail) > max_len:
             break
         text = candidate
         shown = i + 1
-    omitted = len(labels) - shown
-    return truncate(f"{text} ほか{omitted}点" if omitted > 0 else text, max_len)
+    omitted = len(entries) - shown
+    tail = f" ほか{omitted}点" if omitted > 0 else ""
+    if shown == 1 and len(text + tail) > max_len:
+        text = label(entries[0], max_len - len(tail))
+    return truncate(text + tail, max_len)
+
+
+def memo_name_lines(names: list[str], budget: int) -> list[str]:
+    """商品名 (省略なし・同名は ×N) を「・」の箇条書きにして budget 文字以内に収める。
+
+    入りきらない行は … で切り、それでも足りなければ以降を「・ほかN点」に畳む。
+    """
+    counts: dict[str, int] = {}
+    for n in names:
+        n = re.sub(r"\s+", " ", n or "").strip()
+        counts[n] = counts.get(n, 0) + 1
+    lines = [f"{MEMO_BULLET}{n}" + (f"×{c}" if c > 1 else "") for n, c in counts.items()]
+
+    def rest(k: int) -> str:
+        return f"{MEMO_BULLET}ほか{k}点"
+
+    def total(arr: list[str]) -> int:
+        return len(MEMO_JOIN.join(arr))
+
+    sep = len(MEMO_JOIN)
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        left = len(lines) - i - 1
+        # 後ろに「ほかN点」を付ける余地を先に取っておく
+        reserve = sep + len(rest(left)) if left > 0 else 0
+        avail = budget - (total(out) + sep if out else 0) - reserve
+        if len(line) <= avail:
+            out.append(line)
+            continue
+        if avail >= MEMO_LINE_MIN_LEN:
+            out.append(truncate(line, avail))
+        break
+    # 畳んだ行があれば「ほかN点」を付ける。桁が増えて予算を超えるなら1行ずつ戻す
+    while True:
+        omitted = len(lines) - len(out)
+        with_rest = out + [rest(omitted)] if omitted > 0 else out
+        if total(with_rest) <= budget or not out:
+            return with_rest if total(with_rest) <= budget else []
+        out.pop()
 
 
 def build_memo(names: list[str], oid: str = "", refund: int = 0,
@@ -210,7 +275,8 @@ def build_memo(names: list[str], oid: str = "", refund: int = 0,
                mode: str = DEFAULT_MEMO_MODE) -> str:
     """メモ欄。Zaim の上限 (100文字) を必ず守る。
 
-    既定 (notes) は注記と注文IDだけ。商品名は品目欄が持つ。注記を残すのは、あとから
+    既定 (full) は商品名 (省略なし) の箇条書き + 注記 + 注文ID。品目欄は要約なので
+    全文はメモが持つ。notes は注記と注文IDだけ。注記を残すのは、あとから
     カード明細と突合するときに要るため (注文額と請求額が違う理由・Amazon 側を引くキー)。
     full のときは注記を先に確保してから残り枠に商品名を入れる。商品名を先に詰めると
     注記が末尾から押し出されて静かに消え、金額のズレに気付けなくなる。
@@ -242,8 +308,8 @@ def build_memo(names: list[str], oid: str = "", refund: int = 0,
         return tail
 
     budget = FIELD_MAX_LEN - (len(tail) + len(MEMO_JOIN) if tail else 0)
-    head = truncate(combine_names(names), budget) if budget > 0 else ""
-    return MEMO_JOIN.join(p for p in (head, tail) if p)
+    head = memo_name_lines(names, budget)
+    return MEMO_JOIN.join(p for p in (*head, tail) if p)
 
 
 def zaim_row(date: str, memo: str, item: str, amount: int,
@@ -428,8 +494,8 @@ def main() -> None:
                     help="同じ支払いでも商品ごとに行を分ける (Zaim 上は別レコードになる。"
                          "カード明細との1:1突合は崩れるが合計は変わらない)")
     ap.add_argument("--memo", default=DEFAULT_MEMO_MODE, choices=list(MEMO_MODES),
-                    help="メモ欄の中身 (既定 notes=注記と注文IDのみ / none=空欄 / "
-                         "full=全商品名も入れる)。いずれも100文字で必ず切る")
+                    help="メモ欄の中身 (既定 full=商品名の箇条書き+注記+注文ID / "
+                         "notes=注記と注文IDのみ / none=空欄)。いずれも100文字で必ず切る")
     ap.add_argument("--out", default=None, help="出力ファイル名 (既定: zaim_import_<card>.csv)")
     args = ap.parse_args()
 

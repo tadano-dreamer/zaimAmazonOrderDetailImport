@@ -43,7 +43,10 @@
     amount: 8,
   };
 
-  /** 1商品あたりの見出し長。家計簿の一覧で読める長さに収める。 */
+  /**
+   * 品目の要約の長さ。Zaim アプリの「履歴の詳細」で品目が1行に収まり、
+   * 末尾が切れて見えない長さ(実機 2026-10-14: 24文字+… で1行いっぱいだった)。
+   */
   const ITEM_MAX_LEN = 24;
 
   /**
@@ -53,14 +56,24 @@
   const FIELD_MAX_LEN = 100;
 
   /**
-   * 品目欄の予算。**Zaim 側の上限は未確認**(赤字が出たのはメモだけだった)。
-   * 超過すると取込時に弾かれるので安全側に振ってある。上限が判明したらここ1行を直す。
-   * 60 あれば 24文字の商品名を2つ並べて「ほかN点」を足しても収まる。
+   * 品目欄全体の予算。複数商品でも1行に収まるよう、1商品の要約と同じ長さにする
+   * (入りきらない商品は「ほかN点」に畳み、全商品名はメモの箇条書きに残す)。
+   * Zaim 側の項目上限(未確認)よりは十分小さい。
    */
-  const ITEM_FIELD_MAX = 60;
+  const ITEM_FIELD_MAX = ITEM_MAX_LEN;
 
-  /** メモ欄の中身。notes=注記+注文IDのみ(既定) / none=空欄 / full=全商品名も入れる。 */
-  const MEMO_MODES = ['notes', 'none', 'full'];
+  /**
+   * メモ欄の中身。full=商品名(省略なし)の箇条書き+注記+注文ID(既定) /
+   * notes=注記+注文IDのみ / none=空欄。
+   * 品目欄は一覧で切れない長さの要約にしたので、元の商品名はメモが持つ。
+   */
+  const MEMO_MODES = ['full', 'notes', 'none'];
+
+  /** 要約で単語の途中で切らないための最小長。これより手前にしか区切りが無ければ素直に切る。 */
+  const SUMMARY_MIN_LEN = 8;
+
+  /** メモの箇条書きで、切り詰めてでも1行に残す最小長(これ未満なら「ほかN点」に回す)。 */
+  const MEMO_LINE_MIN_LEN = 8;
 
   /**
    * カテゴリの内訳の選択肢。自由入力だと打ち間違いがそのまま新しい内訳として
@@ -85,7 +98,9 @@
 
   const NON_PURCHASE_STATUSES = new Set(['Cancelled', 'Canceled']);
   const ITEM_JOIN = ' / ';
-  const MEMO_JOIN = ' / ';
+  /** メモの行区切り。箇条書きにするため改行(CSV ではクオートされる)。1文字として数える。 */
+  const MEMO_JOIN = '\n';
+  const MEMO_BULLET = '・';
   const JST_OFFSET_MS = 9 * 3600 * 1000;
   const BOM = '﻿';
 
@@ -99,7 +114,7 @@
     source: null,
     aggregate: true,
     splitByItem: false, // true で「商品ごとに1行」(Zaim では別レコードになる)
-    memo: 'notes', // MEMO_MODES のいずれか
+    memo: 'full', // MEMO_MODES のいずれか
     jst: true,
     dateSource: 'ship', // 'ship'=発送日(既定・oracle と同じ) / 'order'=注文日
     dateFrom: '', // 'YYYY-MM-DD' 以降(含む)。空なら下限なし
@@ -241,59 +256,79 @@
   }
 
   /**
-   * Amazon の商品名を家計簿で読める見出しに整える。
-   * 「【まとめ買い】」「[大容量]」のような宣伝ブロックを落として詰め、
-   * 長すぎるものは切る(落とした情報はメモに全文が残る)。
+   * Amazon の商品名を、家計簿の一覧で切れずに読める**要約**にする(maxLen 文字以内・… を付けない)。
+   *
+   * 1. 「【まとめ買い】」「[大容量]」のような宣伝ブロックを落とす。
+   * 2. それでも長ければ「(brand)」のような丸括弧の補足も落とす。
+   * 3. それでも長ければ**単語の区切り(空白)で**切る。区切りが手前すぎる時だけ文字で切る。
+   *
+   * 末尾に … を付けないのは、Zaim の一覧で「途中で切れた」ように見えるため。
+   * 省いた部分はメモ欄に全文が残る(buildMemo の full)。
    */
   function shortenName(raw, maxLen) {
     const limit = maxLen == null ? ITEM_MAX_LEN : maxLen;
+    const tidy = (x) => x.replace(/\s+/g, ' ').trim();
+    const len = (x) => Array.from(x).length;
     // 開き括弧と同じ種類の閉じ括弧までを1組として落とす。種類を問わず最も近い
     // 閉じ括弧で止めると "【A[B]C】" で "C】" が残る
-    let s = String(raw == null ? '' : raw)
-      .replace(/【[^】]*】|［[^］]*］|\[[^\]]*\]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    let s = tidy(String(raw == null ? '' : raw).replace(/【[^】]*】|［[^］]*］|\[[^\]]*\]/g, ' '));
     if (s === '') s = String(raw == null ? '' : raw).trim();
+    if (len(s) <= limit) return s;
+
+    const noParen = tidy(s.replace(/\([^()]*\)|（[^（）]*）/g, ' '));
+    if (noParen !== '') s = noParen;
+    if (len(s) <= limit) return s;
+
     // slice はコード単位で切るため、絵文字などのサロゲートペアを分断して
     // 孤立サロゲートを残す。UTF-8 に書き出す時点で「�」になり品目が壊れるので、
     // コードポイント単位で数える。
     const chars = Array.from(s);
-    return chars.length <= limit ? s : `${chars.slice(0, limit).join('').trim()}…`;
+    // limit 文字目の直後が空白なら、limit 文字ちょうどが単語の切れ目
+    const cut = chars.slice(0, limit + 1).lastIndexOf(' ');
+    const end = cut >= SUMMARY_MIN_LEN ? cut : limit;
+    return chars.slice(0, end).join('').replace(/[\s,、・/\-]+$/, '');
   }
 
   /**
-   * 出荷グループの商品名リスト → 品目欄の1行。
-   * 同名は ×N。**予算いっぱいまで商品名を並べ**、入りきらない分だけ「ほかN点」に畳む。
-   *
-   * 先頭1件だけ出して「ほか1点」にすると、何を買ったのか家計簿から分からなくなる
-   * (実機で「乳液… ほか1点」となり、消えた浄水器カートリッジが追えなかった)。
+   * 出荷グループの商品名リスト → 品目欄の1行(maxLen 文字以内)。
+   * 同名は ×N。**予算いっぱいまで商品名の要約を並べ**、入りきらない分だけ「ほかN点」に畳む。
+   * 「ほかN点」を付けると1件目が入りきらないときは、1件目の要約をその分だけ短くする
+   * (末尾に … を付けて切ると、一覧で途中で切れて見える)。全商品名はメモに残る。
    */
   function itemLabel(names, maxLen) {
     // `maxLen || 既定` にすると 0 を渡したとき黙って既定に戻る(0 は有効な予算)
     const budget = maxLen == null ? ITEM_FIELD_MAX : maxLen;
+    const len = (x) => Array.from(x).length;
     const counts = new Map();
     for (const raw of names || []) {
       const n = String(raw == null ? '' : raw).trim();
       counts.set(n, (counts.get(n) || 0) + 1);
     }
-    const labels = [...counts.entries()].map(
-      ([n, c]) => shortenName(n) + (c > 1 ? `×${c}` : '')
-    );
-    if (labels.length === 0) return '';
+    const entries = [...counts.entries()];
+    if (entries.length === 0) return '';
+    // ×N を含めて max 文字に収める
+    const label = ([n, c], max) => {
+      const suffix = c > 1 ? `×${c}` : '';
+      return shortenName(n, Math.max(max - len(suffix), 0)) + suffix;
+    };
 
-    let text = labels[0];
+    let text = label(entries[0], Math.min(ITEM_MAX_LEN, budget));
     let shown = 1;
-    for (let i = 1; i < labels.length; i++) {
-      const candidate = `${text}${ITEM_JOIN}${labels[i]}`;
-      const rest = labels.length - i - 1;
+    for (let i = 1; i < entries.length; i++) {
+      const candidate = `${text}${ITEM_JOIN}${label(entries[i], ITEM_MAX_LEN)}`;
+      const rest = entries.length - i - 1;
       // 「ほかN点」を付けた瞬間に予算を超えないよう、先に足して判定する
       const tail = rest > 0 ? ` ほか${rest}点` : '';
-      if (Array.from(candidate + tail).length > budget) break;
+      if (len(candidate + tail) > budget) break;
       text = candidate;
       shown = i + 1;
     }
-    const omitted = labels.length - shown;
-    return truncate(omitted > 0 ? `${text} ほか${omitted}点` : text, budget);
+    const omitted = entries.length - shown;
+    const tail = omitted > 0 ? ` ほか${omitted}点` : '';
+    if (shown === 1 && len(text + tail) > budget) {
+      text = label(entries[0], budget - len(tail));
+    }
+    return truncate(text + tail, budget);
   }
 
   /** Refund Details.csv の行配列 → {Order ID: 返金合計額}。0/不正額はスキップ。 */
@@ -735,9 +770,50 @@
   }
 
   /**
+   * 商品名(省略なし・同名は ×N)を「・」の箇条書きにして、budget 文字以内に収める。
+   * 入りきらない行は … で切り、それでも足りなければ以降を「・ほかN点」に畳む。
+   */
+  function memoNameLines(names, budget) {
+    const counts = new Map();
+    for (const raw of names || []) {
+      const n = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+      counts.set(n, (counts.get(n) || 0) + 1);
+    }
+    const lines = [...counts.entries()].map(([n, c]) => `${MEMO_BULLET}${n}${c > 1 ? `×${c}` : ''}`);
+    const len = (x) => Array.from(x).length;
+    const sep = MEMO_JOIN.length;
+    const rest = (k) => `${MEMO_BULLET}ほか${k}点`;
+    const total = (arr) => len(arr.join(MEMO_JOIN));
+
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const left = lines.length - i - 1;
+      // 後ろに「ほかN点」を付ける余地を先に取っておく
+      const reserve = left > 0 ? sep + len(rest(left)) : 0;
+      const avail = budget - (out.length ? total(out) + sep : 0) - reserve;
+      if (len(lines[i]) <= avail) {
+        out.push(lines[i]);
+        continue;
+      }
+      if (avail >= MEMO_LINE_MIN_LEN) out.push(truncate(lines[i], avail));
+      break;
+    }
+    // 畳んだ行があれば「ほかN点」を付ける。桁が増えて予算を超えるなら1行ずつ戻す
+    for (;;) {
+      const omitted = lines.length - out.length;
+      const withRest = omitted > 0 ? [...out, rest(omitted)] : out;
+      if (total(withRest) <= budget || out.length === 0) {
+        return total(withRest) <= budget ? withRest : [];
+      }
+      out.pop();
+    }
+  }
+
+  /**
    * メモ欄。**Zaim の上限(100文字)を必ず守る**。
    *
-   * 既定(notes)は注記と注文IDだけ。商品名は品目欄が持つようになったので外してある。
+   * 既定(full)は商品名(省略なし)の箇条書き+注記+注文ID。品目欄は一覧で切れない
+   * 要約にしたので、何を買ったかの全文はメモが持つ。notes は注記と注文IDだけ。
    * 注記を残すのは、あとからカード明細と突合するときに要るため:
    *   返金/ギフト券/複数出荷 = 注文額とカード請求額が違う理由、注文ID = Amazon 側を引くキー。
    *
@@ -745,7 +821,7 @@
    * 注記が末尾から押し出されて静かに消え、金額のズレに気付けなくなる。
    */
   function buildMemo(names, info) {
-    const mode = MEMO_MODES.includes(info.memo) ? info.memo : 'notes';
+    const mode = MEMO_MODES.includes(info.memo) ? info.memo : DEFAULT_OPTIONS.memo;
     if (mode === 'none') return '';
 
     const notes = [];
@@ -764,9 +840,8 @@
     if (mode === 'notes') return tail;
 
     const used = tail ? Array.from(tail).length + MEMO_JOIN.length : 0;
-    const budget = FIELD_MAX_LEN - used;
-    const head = budget > 0 ? truncate(combineNames(names), budget) : '';
-    return [head, tail].filter((x) => x).join(MEMO_JOIN);
+    const head = memoNameLines(names, FIELD_MAX_LEN - used);
+    return [...head, tail].filter((x) => x).join(MEMO_JOIN);
   }
 
   /**
@@ -846,6 +921,7 @@
     truncate,
     shortenName,
     itemLabel,
+    buildMemo,
     loadRefunds,
     detectCards,
     suggestSuccessors,

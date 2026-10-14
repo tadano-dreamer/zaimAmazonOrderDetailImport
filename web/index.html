@@ -104,14 +104,15 @@
         <fieldset class="field">
           <legend>メモ欄</legend>
           <div class="radio-row" role="radiogroup">
-            <label class="radio-chip"><input type="radio" name="memo" value="notes" checked><span>注記と注文ID<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="memo" value="full" checked><span>商品名の箇条書き+注文ID<small>推奨</small></span></label>
+            <label class="radio-chip"><input type="radio" name="memo" value="notes"><span>注記と注文IDのみ</span></label>
             <label class="radio-chip"><input type="radio" name="memo" value="none"><span>空欄</span></label>
-            <label class="radio-chip"><input type="radio" name="memo" value="full"><span>全商品名も</span></label>
           </div>
           <p class="hint">
-            Zaim のメモは<strong>100文字まで</strong>(超えると保存できません)。どの設定でも
-            100文字以内に収めます。返金・ギフト券・分割出荷の注記は、あとでカード明細と
-            突合するときに要るので既定で残しています。
+            品目は一覧で切れない長さの<strong>要約</strong>にし、元の商品名はメモに
+            「・」の箇条書きで入れます。Zaim のメモは<strong>100文字まで</strong>
+            (超えると保存できません)なので、返金・ギフト券・分割出荷の注記と注文IDを先に確保し、
+            残りに入りきらない商品名は「…」で切るか「ほかN点」にまとめます。
           </p>
         </fieldset>
 
