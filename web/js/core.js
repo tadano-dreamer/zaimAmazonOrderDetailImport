@@ -350,10 +350,17 @@
    * 明細件数と利用期間(初回・最終の計上日)付きで返す。件数降順。
    * 例: [{card:"5171", brand:"Visa", count:56, firstDate:"2025-03-27",
    *       lastDate:"2026-07-09", label:"Visa - 5171(56件)"}, ...]
+   *
+   * period({from, to}・'' は端なし)を渡すと、各カードにその期間の明細件数
+   * `periodCount` を足す。画面で「この期間に使ったカード」だけを前に出すため
+   * (使わなくなった古いカードが毎回並ぶと、選び間違いの元になる)。
+   * 利用期間(firstDate/lastDate)と並び順は期間に関係なく全体で決める。
    */
-  function detectCards(orderRows, jst) {
+  function detectCards(orderRows, jst, period) {
     const useJst = jst === undefined ? true : jst;
-    const found = new Map(); // last4 → {brand, count, firstDate, lastDate}
+    const from = (period && period.from) || '';
+    const to = (period && period.to) || '';
+    const found = new Map(); // last4 → {brand, count, periodCount, firstDate, lastDate}
     const re = /([A-Za-z][A-Za-z ]*?)\s*-\s*(\d{4})(?!\d)/g;
     for (const row of orderRows || []) {
       const pay = row['Payment Method Type'] || '';
@@ -366,8 +373,15 @@
         const last4 = m[2];
         if (seen.has(last4)) continue;
         seen.add(last4);
-        const e = found.get(last4) || { brand, count: 0, firstDate: '', lastDate: '' };
+        const e = found.get(last4) || {
+          brand,
+          count: 0,
+          periodCount: 0,
+          firstDate: '',
+          lastDate: '',
+        };
         e.count += 1;
+        if (date && inRange(date, from, to)) e.periodCount += 1;
         // ギフト券併用表記("...Card and Visa - 5171")より素のブランド名を優先
         if (!e.brand || brand.length < e.brand.length) e.brand = brand;
         if (date) {
@@ -383,6 +397,7 @@
         card: last4,
         brand: e.brand,
         count: e.count,
+        periodCount: e.periodCount,
         firstDate: e.firstDate,
         lastDate: e.lastDate,
         label: `${e.brand} - ${last4}(${e.count}件)`,

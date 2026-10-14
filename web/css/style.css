@@ -183,6 +183,8 @@ select:focus, input[type="text"]:focus, .btn:focus-visible {
 .card-item small { font-size: 0.75rem; color: var(--text-sub); }
 .card-item:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .card-item:has(input:focus-visible) { outline: 3px solid rgba(14, 159, 91, 0.35); }
+.card-more { display: grid; gap: 8px; }
+.card-more summary { cursor: pointer; font-size: 0.85rem; color: var(--text-sub); padding: 4px 0; }
 
 /* ---------- 期間指定(プリセット + 日付) ---------- */
 .date-range {

@@ -1277,3 +1277,22 @@ test('convert: source を明示したらそちらが優先される(空文字は
   const blank = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, { ...base, source: '' });
   assert.ok(blank.rows.every((r) => r[COL.source] === ''));
 });
+
+// ------------------------------------------------- 期間に使ったカード(periodCount)
+test('detectCards: period を渡すと、その期間の明細件数 periodCount が付く', () => {
+  const rows = [
+    { 'Payment Method Type': 'Visa - 1111', 'Ship Date': '2026-01-10T03:00:00Z' },
+    { 'Payment Method Type': 'Visa - 1111', 'Ship Date': '2026-02-10T03:00:00Z' },
+    { 'Payment Method Type': 'Visa - 2222', 'Ship Date': '2026-02-11T03:00:00Z' },
+  ];
+  const cards = detectCards(rows, true, { from: '2026-01-01', to: '2026-01-31' });
+  const by = Object.fromEntries(cards.map((c) => [c.card, c]));
+  assert.equal(by['1111'].periodCount, 1);
+  assert.equal(by['2222'].periodCount, 0); // 1月には使っていない
+  // 利用期間・件数・並び順は期間に関係なく全体で決まる
+  assert.equal(by['1111'].count, 2);
+  assert.equal(by['2222'].lastDate, '2026-02-11');
+  assert.equal(cards[0].card, '1111');
+  // 期間なし(端なし)なら全件
+  assert.equal(detectCards(rows).find((c) => c.card === '2222').periodCount, 1);
+});

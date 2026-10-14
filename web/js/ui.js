@@ -68,7 +68,29 @@
     // 出力しない行のキー。「選んだ行」ではなく「外した行」を覚えるのは、期間やカードを
     // 変えて行が増えたときに、新しい行が既定で出力対象になるようにするため。
     excluded: new Set(),
+    cardsKey: '', // カード一覧を作ったときの期間(変わったら作り直す)
   };
+
+  /**
+   * 前回選んだカードの記憶(この端末のブラウザだけ・失敗しても動く)。
+   * 期間に使ったカードが複数あるとき、毎回同じカードを選び直さなくて済むようにする。
+   */
+  const CARD_MEMORY_KEY = 'zaim-amazon-import:cards';
+  function rememberCards(cards) {
+    try {
+      localStorage.setItem(CARD_MEMORY_KEY, JSON.stringify(cards));
+    } catch (e) {
+      /* プライベートモード等。覚えられないだけで動作は変わらない */
+    }
+  }
+  function rememberedCards() {
+    try {
+      const v = JSON.parse(localStorage.getItem(CARD_MEMORY_KEY) || '[]');
+      return Array.isArray(v) ? v.map(String) : [];
+    } catch (e) {
+      return [];
+    }
+  }
 
   /**
    * 日付欄の編集に起因する再描画かどうか({source, isCommit} か null)。
@@ -193,13 +215,17 @@
     }
 
     state.cards = cards;
-    state.selectedCards = [cards[0].card]; // 既定は最多利用カード
-    state.dateFrom = '';
-    state.dateTo = '';
-    state.customPeriod = false;
+    state.selectedCards = [];
+    state.cardsKey = '';
     state.overrides = {};
     state.excluded.clear(); // 別のデータなので、外した行の記憶は引き継がない
-    renderCardList();
+    // 期間を先に決め、その期間に使ったカードだけを前に出す(syncCards)。
+    // 既定は前月 ― 月次で取り込む運用なので、たいていは何も触らずに済む
+    const month = defaultMonth(allCardMonths().map((m) => m.month));
+    const r = month ? monthRange(month) : { from: '', to: '' };
+    state.dateFrom = r.from;
+    state.dateTo = r.to;
+    state.customPeriod = false;
 
     setStatus(
       `読み込み完了: 明細 ${state.orderRows.length} 件 / 返金 ${state.refundRows.length} 件 / カード ${cards.length} 種${multiNote}`
@@ -213,35 +239,95 @@
 
   // ------------------------------------------------------- カード選択(複数可)
 
-  /** 検出カードをチェックボックスで一覧表示。利用期間も出して切替に気付けるようにする。 */
+  /**
+   * 期間に合わせてカード一覧を作り直す(期間が変わったときだけ)。
+   *
+   * 選択は次の順に決める。
+   *   1. いまの選択のどれかをこの期間に使っていれば、選択はそのまま
+   *      (期間を狭めて広げ直したときに、外れたカードが戻らないと明細が黙って漏れる)
+   *   2. 前回選んだカード(この端末の記憶)のうち、この期間に使ったもの
+   *   3. この期間に一番使ったカード
+   * この期間に1枚も使っていなければ選択は変えない(空にすると「カード未選択」に見える)。
+   */
+  function syncCards() {
+    const jst = radio('tz', 'jst') === 'jst';
+    const key = `${state.dateFrom}|${state.dateTo}|${jst}`;
+    if (state.cardsKey === key) return;
+    state.cardsKey = key;
+    state.cards = Core.detectCards(state.orderRows, jst, {
+      from: state.dateFrom,
+      to: state.dateTo,
+    });
+    const active = state.cards
+      .filter((c) => c.periodCount > 0)
+      .sort((x, y) => y.periodCount - x.periodCount);
+    if (active.length > 0) {
+      const used = (list) => list.filter((card) => active.some((c) => c.card === card));
+      const remembered = used(rememberedCards());
+      state.selectedCards = used(state.selectedCards).length
+        ? state.selectedCards
+        : remembered.length
+          ? remembered
+          : [active[0].card];
+    }
+    renderCardList();
+  }
+
+  /** カード1枚ぶんのチェックボックス。 */
+  function cardItem(c) {
+    const label = document.createElement('label');
+    label.className = 'card-item';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = c.card;
+    box.checked = state.selectedCards.includes(c.card);
+    box.addEventListener('change', () => {
+      state.selectedCards = state.selectedCards.filter((x) => x !== c.card);
+      if (box.checked) state.selectedCards.push(c.card);
+      rememberCards(state.selectedCards);
+      renderCardSwitchNote();
+      render();
+    });
+    const text = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = `${c.brand} - ${c.card}`;
+    const sub = document.createElement('small');
+    const span = c.firstDate && c.lastDate ? ` / ${c.firstDate} 〜 ${c.lastDate}` : '';
+    sub.textContent =
+      !state.dateFrom && !state.dateTo
+        ? `${c.count}件${span}`
+        : `この期間 ${c.periodCount}件(全${c.count}件${span})`;
+    text.append(name, sub);
+    label.append(box, text);
+    return label;
+  }
+
+  /**
+   * 検出カードをチェックボックスで一覧表示。**この期間に使ったカード(と選択中のカード)
+   * だけを前に出し**、使っていないカードは折りたたむ。使わなくなった古いカードが
+   * 毎回並ぶと煩わしく、選び間違いの元にもなる。
+   */
   function renderCardList() {
-    el.cardList.replaceChildren(
-      ...state.cards.map((c) => {
-        const label = document.createElement('label');
-        label.className = 'card-item';
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.value = c.card;
-        box.checked = state.selectedCards.includes(c.card);
-        box.addEventListener('change', () => {
-          state.selectedCards = state.selectedCards.filter((x) => x !== c.card);
-          if (box.checked) state.selectedCards.push(c.card);
-          renderCardSwitchNote();
-          render();
-        });
-        const text = document.createElement('span');
-        const name = document.createElement('strong');
-        name.textContent = `${c.brand} - ${c.card}`;
-        const sub = document.createElement('small');
-        sub.textContent =
-          c.firstDate && c.lastDate
-            ? `${c.count}件 / ${c.firstDate} 〜 ${c.lastDate}`
-            : `${c.count}件`;
-        text.append(name, sub);
-        label.append(box, text);
-        return label;
-      })
+    const shown = state.cards.filter(
+      (c) => c.periodCount > 0 || state.selectedCards.includes(c.card)
     );
+    const hidden = state.cards.filter((c) => !shown.includes(c));
+    const children = shown.map(cardItem);
+    if (shown.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'この期間にカードで支払った明細はありません。期間を確認してください。';
+      children.push(empty);
+    }
+    if (hidden.length > 0) {
+      const more = document.createElement('details');
+      more.className = 'card-more';
+      const summary = document.createElement('summary');
+      summary.textContent = `この期間に使っていないカード(${hidden.length}枚)`;
+      more.append(summary, ...hidden.map(cardItem));
+      children.push(more);
+    }
+    el.cardList.replaceChildren(...children);
     renderCardSwitchNote();
   }
 
@@ -276,6 +362,7 @@
       for (const c of successors) {
         if (!state.selectedCards.includes(c.card)) state.selectedCards.push(c.card);
       }
+      rememberCards(state.selectedCards);
       renderCardList();
       render();
     });
@@ -293,6 +380,33 @@
     const [y, m] = month.split('-').map(Number);
     const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
     return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, '0')}` };
+  }
+
+  /**
+   * 全カードを対象にした月の一覧(期間プルダウン用)。期間はカードより先に選ぶので、
+   * 選択中のカードではなくデータ全体から作る。
+   */
+  function allCardMonths() {
+    const opt = Object.assign({}, currentOptions(), {
+      cards: Core.detectCards(state.orderRows).map((c) => c.card),
+      dateFrom: '',
+      dateTo: '',
+    });
+    const result = Core.convert(state.orderRows, state.refundRows, opt);
+    state.allRange = result.range;
+    return result.months;
+  }
+
+  /**
+   * 読み込み直後の期間。**前月**(月次で取り込む運用のため)。
+   * 前月に明細が無ければ、データのある一番新しい月。
+   */
+  function defaultMonth(months) {
+    if (months.length === 0) return '';
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const want = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+    return months.includes(want) ? want : months[months.length - 1];
   }
 
   /** 全期間(=データ全体を覆う指定)かどうか。 */
@@ -695,6 +809,7 @@
 
   function render() {
     if (!state.orderRows) return;
+    syncCards(); // 期間が変わっていればカード一覧と選択を作り直す(選択は opt に入る)
     const opt = currentOptions();
 
     // まとめ方を変えたら行の選択は持ち越さない。行の識別子(meta.key)はまとめ方ごとに
@@ -741,6 +856,7 @@
         Object.assign({}, opt, { dateFrom: '', dateTo: '' })
       );
       setActionStatus('選択中の期間にこのカードの明細が無いため、全期間に戻しました。');
+      syncCards();
     }
     const { rows, notes, warnings, meta, months, range, unmatchedOverrides } = result;
     // 対象カード・計上日の設定を変えて、入力済みの補正がどの注文にも当たらなくなった場合。
@@ -750,7 +866,9 @@
         `入力済みの実請求額 ${unmatchedOverrides.length} 件は、現在の条件では適用されていません(処理メモを確認してください)。`
       );
     }
-    renderPeriodControls(months, range);
+    // プルダウンの月はカードに関係なく全体から作る(期間はカードより先に選ぶため)
+    const allMonths = allCardMonths();
+    renderPeriodControls(allMonths, state.allRange);
 
     // 取り込み先(内訳)をファイル名に入れておくと、二重取込の管理がしやすい
     const tag = (Core.SUBCATEGORY_CHOICES.find((c) => c.value === opt.subcategory) || {}).tag;

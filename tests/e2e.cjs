@@ -61,8 +61,43 @@ function check(cond, label) {
   }
 }
 
+/**
+ * CSV を「1レコード=1要素」の配列にする(改行コードは比較対象にしない)。
+ * メモは箇条書きで改行を含む(クオート内)ので、単純に改行で割るとレコードが割れる。
+ */
 function normalize(text) {
-  return text.replace(/^﻿/, '').split(/\r\n|\n/).filter(Boolean);
+  const records = [];
+  let cur = '';
+  let quoted = false;
+  for (const line of text.replace(/^﻿/, '').split(/\r\n|\n/)) {
+    cur = quoted ? `${cur}\n${line}` : line;
+    quoted = ((cur.match(/"/g) || []).length % 2) === 1;
+    if (!quoted && cur) records.push(cur);
+  }
+  return records;
+}
+
+/** 1レコードをセルに割る(クオート・"" のエスケープに対応)。 */
+function cells(record) {
+  const out = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < record.length; i++) {
+    const ch = record[i];
+    if (quoted) {
+      if (ch === '"' && record[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      out.push(cell);
+      cell = '';
+    } else cell += ch;
+  }
+  out.push(cell);
+  return out;
 }
 
 // ---------------------------------------------------------------- テスト本体
@@ -225,13 +260,48 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     console.log('  [SKIP] 実ZIPなし');
   }
 
-  // --- シナリオ C: ダミー ZIP ----------------------------------------------
+  // --- シナリオ C0: 期間を先に決め、その期間に使ったカードだけを前に出す ------
+  // 使わなくなったカードが毎回並ぶと煩わしい(実運用で指摘あり)。既定は前月で、
+  // 前月に明細が無ければデータの最新月(ダミーは 2026-05〜07 なので 2026-07)。
   await page.setInputFiles('#zip-input', DUMMY_ZIP);
   await page.waitForFunction(
     () => document.getElementById('load-status').textContent.includes('読み込み完了'),
     null,
     { timeout: 30000 }
   );
+  check(
+    (await page.inputValue('#period-select')) === '2026-07',
+    `読み込み直後の期間はデータの最新月 → ${await page.inputValue('#period-select')}`
+  );
+  const cardLayout = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll('#card-list input[type="checkbox"]')];
+    return {
+      front: boxes.filter((b) => !b.closest('details')).map((b) => b.value).sort(),
+      folded: boxes.filter((b) => b.closest('details')).map((b) => b.value).sort(),
+      checked: boxes.filter((b) => b.checked).map((b) => b.value),
+    };
+  });
+  check(
+    ['5171', '7474'].every((c) => cardLayout.front.includes(c)) &&
+      cardLayout.folded.join(',') === '1002',
+    `7月に使ったカードだけ前に出て、使っていないカードは畳まれる → 前:${cardLayout.front} 畳:${cardLayout.folded}`
+  );
+  check(
+    cardLayout.checked.length === 1 && cardLayout.front.includes(cardLayout.checked[0]),
+    `既定の選択はこの期間に使ったカード1枚 → ${cardLayout.checked}`
+  );
+  await page.selectOption('#period-select', '2026-06');
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('#card-list > label input')].every((b) => b.value !== '7474')
+  );
+  const juneFront = await page.$$eval('#card-list > label input', (bs) => bs.map((b) => b.value).sort());
+  check(
+    juneFront.includes('1002') && !juneFront.includes('7474'),
+    `期間を変えるとカード一覧も変わる(6月) → ${juneFront}`
+  );
+
+  // --- シナリオ C: ダミー ZIP(全期間) --------------------------------------
+  await page.selectOption('#period-select', 'all');
   await selectCards(page, ['5171']);
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '6件'
@@ -369,10 +439,11 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     (await page.inputValue('#period-select')) === 'all',
     `データ範囲外になった期間は全期間へ戻る → ${await page.inputValue('#period-select')}`
   );
+  // 期間はカードより先に選ぶので、日付欄はカードではなくデータ全体の範囲を示す
   check(
-    (await page.inputValue('#period-from')) === '2026-06-21' &&
-      (await page.inputValue('#period-to')) === '2026-06-21',
-    `日付もそのカードの範囲に入る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
+    (await page.inputValue('#period-from')) === '2026-05-20' &&
+      (await page.inputValue('#period-to')) === '2026-07-24',
+    `日付はデータ全体の範囲に戻る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
   );
   await selectCards(page, ['5171', '7474']);
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
@@ -533,19 +604,19 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   // 取り込み先の内訳を間違えると家計簿が汚れる。CSV の3列目に出ること。
   const yusukeCsv = normalize(await captureCsvViaDownload(page));
   check(
-    yusukeCsv.slice(1).every((l) => l.split(',')[2] === 'ゆうすけAmazon'),
-    `既定の内訳が3列目に入る → ${yusukeCsv[1].split(',')[2]}`
+    yusukeCsv.slice(1).every((l) => cells(l)[2] === 'ゆうすけAmazon'),
+    `既定の内訳が3列目に入る → ${cells(yusukeCsv[1])[2]}`
   );
   await page.check('input[name="subcategory"][value="ともかAmazon"]');
   const tomokaCsv = normalize(await captureCsvViaDownload(page));
   check(
-    tomokaCsv.slice(1).every((l) => l.split(',')[2] === 'ともかAmazon'),
-    `内訳を切り替えると3列目が変わる → ${tomokaCsv[1].split(',')[2]}`
+    tomokaCsv.slice(1).every((l) => cells(l)[2] === 'ともかAmazon'),
+    `内訳を切り替えると3列目が変わる → ${cells(tomokaCsv[1])[2]}`
   );
   // 支払元(6列目)は内訳に連動する。選ばせずに追随させる
   check(
-    tomokaCsv.slice(1).every((l) => l.split(',')[5] === 'ともEPOS'),
-    `内訳に合わせて支払元も切り替わる → ${tomokaCsv[1].split(',')[5]}`
+    tomokaCsv.slice(1).every((l) => cells(l)[5] === 'ともEPOS'),
+    `内訳に合わせて支払元も切り替わる → ${cells(tomokaCsv[1])[5]}`
   );
   check(
     (await page.inputValue('#opt-source')) === 'ともEPOS',
@@ -618,12 +689,18 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
   const reloadedPeriod = await page.inputValue('#period-select');
   const reloadedCount = await page.textContent('#sum-count');
-  check(reloadedPeriod === 'all', `ZIP再選択で期間の表示も全期間に戻る → ${reloadedPeriod}`);
-  // 表示が「全期間」なら6件、月指定なら2件でなければ、表示と中身が矛盾している
+  check(reloadedPeriod === '2026-07', `ZIP再選択で期間は既定(最新月)に戻る → ${reloadedPeriod}`);
+  // 前回選んだ 5171 が記憶から選ばれ、7月なら2件。表示と中身が矛盾していないこと
   check(
-    (reloadedPeriod === 'all') === (reloadedCount === '6件'),
+    reloadedCount === '2件',
     `表示(${reloadedPeriod})と実際の出力件数(${reloadedCount})が矛盾しない`
   );
+  check(
+    (await page.$$eval('#card-list input:checked', (bs) => bs.map((b) => b.value))).join(',') === '5171',
+    '前回選んだカード(5171)が記憶されて選ばれる'
+  );
+  await page.selectOption('#period-select', 'all');
+  await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
 
   // --- シナリオ I: Zaim の取込設定の案内 --------------------------------------
   // 実機で「支出の金額の列」を 6 列目(=品目)に指定していた。人が数えると取り違えるので、
@@ -769,6 +846,7 @@ async function main() {
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
     const status = await page.textContent('#load-status');
     check(status.includes('統合'), `統合の注記が表示される: "${status}"`);
+    await page.selectOption('#period-select', 'all');
     await selectCards(page, ['5171']);
     await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
     check((await page.textContent('#sum-count')) === '6件', '分割ZIP: 件数 6件(全パーツ読込)');

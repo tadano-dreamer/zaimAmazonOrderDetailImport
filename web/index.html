@@ -38,16 +38,6 @@
     <section class="card" id="settings-section" aria-labelledby="step2-title" hidden>
       <h2 id="step2-title"><span class="step-no">2</span>抽出条件</h2>
 
-      <fieldset class="field">
-        <legend>支払いカード(自動検出・複数選択可)</legend>
-        <div class="card-list" id="card-list"></div>
-        <div class="notice notice-warn" id="card-switch-note" hidden></div>
-        <p class="hint">
-          カードを更新・再発行すると下4桁が変わります。家計簿上は同じ口座なので、
-          <strong>旧番号と新番号は両方選んでください</strong>(片方だけだと切替以降が丸ごと漏れます)。
-        </p>
-      </fieldset>
-
       <div class="field">
         <label for="period-select">出力する期間</label>
         <select id="period-select"></select>
@@ -56,10 +46,21 @@
           <label class="date-field"><span>終了日</span><input type="date" id="period-to"></label>
         </div>
         <p class="hint">
-          上で月を選ぶと日付が自動で入ります。日付を直接変えれば<strong>1日単位</strong>で切り出せます
-          (取り込み済みの翌日から、など)。
+          最初は<strong>前月</strong>(前月に明細が無ければ最新の月)が入っています。上で月を選ぶと日付が自動で入り、
+          日付を直接変えれば<strong>1日単位</strong>で切り出せます(取り込み済みの翌日から、など)。
         </p>
       </div>
+
+      <fieldset class="field">
+        <legend>支払いカード(この期間に使ったカード・複数選択可)</legend>
+        <div class="card-list" id="card-list"></div>
+        <div class="notice notice-warn" id="card-switch-note" hidden></div>
+        <p class="hint">
+          期間内に使っていないカードは折りたたんでいます。選んだカードはこの端末に記憶し、次回も選ばれます。
+          カードを更新・再発行すると下4桁が変わります。家計簿上は同じ口座なので、
+          <strong>旧番号と新番号は両方選んでください</strong>(片方だけだと切替以降が丸ごと漏れます)。
+        </p>
+      </fieldset>
 
       <fieldset class="field" id="subcategory-field">
         <legend>カテゴリの内訳(取り込み先)</legend>
