@@ -37,7 +37,7 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 ### テスト
 
 ```bash
-node --test web/js/core.test.js        # 単体テスト(98件)
+node --test web/js/core.test.js        # 単体テスト(102件)
 node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
 node scripts/verify_parity_fuzz.js     # JS↔Python 同値性(ランダム生成データ・要python)
