@@ -10,7 +10,7 @@
 # ============================================================================
 
 project: zaim-amazon-import      # ★必須。manager 側の id。変えない
-updated_at: 2026-10-15T23:01:14+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
+updated_at: 2026-10-15T23:09:06+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
 mode: issues_only                # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
 health: green                    # ★必須。green | yellow | red
 phase: 実装と実機 Zaim への取込テストまで完了し、実データを月ごとに取り込む運用段階   # ★必須
@@ -43,7 +43,7 @@ open_tasks:
     blocked_reason: null
     waiting_for: null
     done_when: 残すか消すかを決めた。消す場合は該当箇所を集計値かダミーに置き換えてコミットした
-    ref: CLAUDE.md の公開リポジトリとしてのセキュリティ留意事項 / README.md / docs/IMPLEMENTATION.md §9・§11
+    ref: docs/PUBLIC_DATA_REVIEW.md（判断材料と推奨。次はここの説明から入る） / CLAUDE.md の公開リポジトリとしてのセキュリティ留意事項
 # 1件の書き方（載せるときはこの形。★は必須）:
 #   - id: zaim-amazon-import-001   # ★ <project>-NNN。採番はこのプロジェクトが持つ
 #     title: タスクの内容を1行で      # ★
@@ -80,6 +80,7 @@ recently_closed: []
 **載せている**: `zaim-amazon-import-001`（公開済みの値を消すかの判断）。期限もなくブロッカーでもないが、
 User の判断待ちで、会話に書いただけでは manager に届かないため、2026-09-15 に User の依頼で載せた。
 消しても git の履歴には残る点も判断材料にする。
+2026-10-15 に棚卸しを済ませ、User は判断を期日（10/31）まで持ち越した。**次に入るときは `docs/PUBLIC_DATA_REVIEW.md` で説明してから判断をもらう。**
 
 **載せていない**: 台帳に残っている次の未完事項。いずれも期限なし・他を止めていないため
 `TASKS.md` には載せず、元の台帳に置いたままにしている。
