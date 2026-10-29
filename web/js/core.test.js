@@ -111,27 +111,27 @@ function orderRow(pay, oid, ship, name, amount, status, orderDate) {
 }
 
 const FIXTURE_ORDERS = [
-  orderRow('Visa - 5171', 'A', '2026-06-30T03:50:00Z', '紙コップ', '477', 'Closed'),
-  orderRow('Visa - 5171', 'A', '2026-06-30T03:50:00Z', 'シート', '1,180', 'Closed'),
-  orderRow('Visa - 5171', 'B', '2026-06-30T11:28:00Z', 'レノア', '1,811', 'Closed'),
-  orderRow('Visa - 5171', 'C', '2026-07-08T21:06:00Z', '今治', '2,370', 'Closed'),
-  orderRow('Visa - 5171', 'C', '2026-07-08T21:06:00Z', '今治', '2,370', 'Closed'),
+  orderRow('Visa - 4242', 'A', '2026-06-30T03:50:00Z', '紙コップ', '477', 'Closed'),
+  orderRow('Visa - 4242', 'A', '2026-06-30T03:50:00Z', 'シート', '1,180', 'Closed'),
+  orderRow('Visa - 4242', 'B', '2026-06-30T11:28:00Z', '柔軟剤', '1,811', 'Closed'),
+  orderRow('Visa - 4242', 'C', '2026-07-08T21:06:00Z', '今治', '2,370', 'Closed'),
+  orderRow('Visa - 4242', 'C', '2026-07-08T21:06:00Z', '今治', '2,370', 'Closed'),
   orderRow(
-    'Gift Certificate/Card and Visa - 5171',
+    'Gift Certificate/Card and Visa - 4242',
     'D',
     '2026-05-19T10:00:00Z',
     '敷パッド',
     '2,880',
     'Closed'
   ),
-  orderRow('Visa - 5171', 'E', '2026-06-01T00:00:00Z', 'キャンセル品', '999', 'Cancelled'),
-  orderRow('Visa - 1745', 'F', '2026-06-02T00:00:00Z', '対象外カード', '500', 'Closed'),
+  orderRow('Visa - 4242', 'E', '2026-06-01T00:00:00Z', 'キャンセル品', '999', 'Cancelled'),
+  orderRow('Visa - 9013', 'F', '2026-06-02T00:00:00Z', '対象外カード', '500', 'Closed'),
 ];
 
 const FIXTURE_REFUNDS = [{ 'Order ID': 'B', 'Refund Amount': '200' }];
 
 const DEFAULTS = {
-  card: '5171',
+  card: '4242',
   category: '生活費',
   subcategory: 'ゆうすけAmazon',
   store: 'Amazon',
@@ -162,7 +162,7 @@ test('convert: 同一注文・同一発送日は合算(477+1180=1657)', () => {
 
 test('convert: 返金をネット集約(1811-200=1611)', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
-  const b = rows.find((r) => r[7] === 'レノア');
+  const b = rows.find((r) => r[7] === '柔軟剤');
   assert.ok(b);
   assert.equal(b[8], '1611');
 });
@@ -198,7 +198,7 @@ test('convert: キャンセル・対象外カードは除外される', () => {
 
 test('convert: 全額返金(net<=0)は出力しない', () => {
   const orders = [
-    orderRow('Visa - 5171', 'X', '2026-06-01T00:00:00Z', '全額返金品', '1,000', 'Closed'),
+    orderRow('Visa - 4242', 'X', '2026-06-01T00:00:00Z', '全額返金品', '1,000', 'Closed'),
   ];
   const refunds = [{ 'Order ID': 'X', 'Refund Amount': '1000' }];
   const { rows, notes } = convert(orders, refunds, DEFAULTS);
@@ -208,8 +208,8 @@ test('convert: 全額返金(net<=0)は出力しない', () => {
 
 test('convert: 返金は最新発送日のグループから差し引く', () => {
   const orders = [
-    orderRow('Visa - 5171', 'Y', '2026-06-01T00:00:00Z', '先発送', '1,000', 'Closed'),
-    orderRow('Visa - 5171', 'Y', '2026-06-05T00:00:00Z', '後発送', '2,000', 'Closed'),
+    orderRow('Visa - 4242', 'Y', '2026-06-01T00:00:00Z', '先発送', '1,000', 'Closed'),
+    orderRow('Visa - 4242', 'Y', '2026-06-05T00:00:00Z', '後発送', '2,000', 'Closed'),
   ];
   const refunds = [{ 'Order ID': 'Y', 'Refund Amount': '500' }];
   const { rows } = convert(orders, refunds, DEFAULTS);
@@ -234,7 +234,7 @@ test('convert: 日付昇順に整列される', () => {
 
 test('convert: Ship Date 空なら Order Date にフォールバック', () => {
   const orders = [
-    orderRow('Visa - 5171', 'G', '', '未発送品', '300', 'Closed', '2026-06-15T00:00:00Z'),
+    orderRow('Visa - 4242', 'G', '', '未発送品', '300', 'Closed', '2026-06-15T00:00:00Z'),
   ];
   const { rows } = convert(orders, [], DEFAULTS);
   assert.equal(rows[0][0], '2026-06-15');
@@ -271,14 +271,14 @@ test('convert: aggregate=false は明細1行=1エントリ・返金無視', () =
     aggregate: false,
   });
   assert.equal(rows.length, 6); // A×2, B, C×2, D(キャンセル・他カード除外)
-  const b = rows.find((r) => r[7] === 'レノア');
+  const b = rows.find((r) => r[7] === '柔軟剤');
   assert.equal(b[8], '1811'); // 返金は引かれない
 });
 
 test('convert: dateSource=order は注文日で計上する', () => {
   const orders = [
     orderRow(
-      'Visa - 5171',
+      'Visa - 4242',
       'H',
       '2026-06-30T03:50:00Z', // Ship Date
       '注文日計上品',
@@ -313,15 +313,15 @@ test('loadRefunds: Order ID ごとに返金額を合算・0/不正はスキッ�
 // ---------------------------------------------------------------- detectCards
 test('detectCards: Payment Method Type からカードを件数付きで検出', () => {
   const cards = detectCards(FIXTURE_ORDERS);
-  const c5171 = cards.find((c) => c.card === '5171');
-  const c1745 = cards.find((c) => c.card === '1745');
-  assert.ok(c5171);
-  assert.equal(c5171.count, 7); // キャンセル含む明細ベース(Visa-5171 ×6 + ギフト併用1)
-  assert.equal(c5171.brand, 'Visa');
-  assert.ok(c1745);
-  assert.equal(c1745.count, 1);
+  const c4242 = cards.find((c) => c.card === '4242');
+  const c9013 = cards.find((c) => c.card === '9013');
+  assert.ok(c4242);
+  assert.equal(c4242.count, 7); // キャンセル含む明細ベース(Visa-4242 ×6 + ギフト併用1)
+  assert.equal(c4242.brand, 'Visa');
+  assert.ok(c9013);
+  assert.equal(c9013.count, 1);
   // 件数降順
-  assert.equal(cards[0].card, '5171');
+  assert.equal(cards[0].card, '4242');
 });
 
 // ---------------------------------------------------------------- generateCsv
@@ -390,7 +390,7 @@ test('formatDate: " and " 連結値でも先頭値を TZ 変換する(従来は�
 test('convert: 複合 Ship Date で出荷日が異なる場合は注記を出す', () => {
   const rows = [
     orderRow(
-      'Visa - 5171',
+      'Visa - 4242',
       'X',
       '2026-07-21T08:00:00Z and 2026-07-23T08:00:00Z',
       '箱',
@@ -408,13 +408,13 @@ test('convert: 複合 Ship Date で出荷日が異なる場合は注記を出す
 // ------------------------------------------------------------ 複数カード選択
 test('convert: cards 配列で複数カードを合算できる(カード再発行対応)', () => {
   const rows = [
-    orderRow('Visa - 5171', 'A', '2026-07-08T00:00:00Z', '旧カード品', '1,000', 'Closed'),
-    orderRow('Visa - 7474', 'B', '2026-07-20T00:00:00Z', '新カード品', '2,000', 'Closed'),
+    orderRow('Visa - 4242', 'A', '2026-07-08T00:00:00Z', '旧カード品', '1,000', 'Closed'),
+    orderRow('Visa - 8787', 'B', '2026-07-20T00:00:00Z', '新カード品', '2,000', 'Closed'),
   ];
-  const single = convert(rows, [], Object.assign({}, DEFAULTS, { cards: ['5171'] }));
+  const single = convert(rows, [], Object.assign({}, DEFAULTS, { cards: ['4242'] }));
   assert.equal(single.rows.length, 1);
 
-  const both = convert(rows, [], Object.assign({}, DEFAULTS, { cards: ['5171', '7474'] }));
+  const both = convert(rows, [], Object.assign({}, DEFAULTS, { cards: ['4242', '8787'] }));
   assert.equal(both.rows.length, 2);
   assert.equal(
     both.rows.reduce((s, r) => s + Number(r[8]), 0),
@@ -434,31 +434,31 @@ test('convert: cards が空配列なら card にフォールバックする', ()
 
 test('detectCards: カードごとの利用期間(初回・最終の計上日)を返す', () => {
   const rows = [
-    orderRow('Visa - 5171', 'A', '2026-03-01T00:00:00Z', 'a', '100', 'Closed'),
-    orderRow('Visa - 5171', 'B', '2026-07-09T00:00:00Z', 'b', '100', 'Closed'),
-    orderRow('Visa - 7474', 'C', '2026-07-19T00:00:00Z', 'c', '100', 'Closed'),
+    orderRow('Visa - 4242', 'A', '2026-03-01T00:00:00Z', 'a', '100', 'Closed'),
+    orderRow('Visa - 4242', 'B', '2026-07-09T00:00:00Z', 'b', '100', 'Closed'),
+    orderRow('Visa - 8787', 'C', '2026-07-19T00:00:00Z', 'c', '100', 'Closed'),
   ];
   const cards = detectCards(rows);
-  const c5171 = cards.find((c) => c.card === '5171');
-  assert.equal(c5171.firstDate, '2026-03-01');
-  assert.equal(c5171.lastDate, '2026-07-09');
-  const c7474 = cards.find((c) => c.card === '7474');
-  assert.equal(c7474.firstDate, '2026-07-19');
+  const c4242 = cards.find((c) => c.card === '4242');
+  assert.equal(c4242.firstDate, '2026-03-01');
+  assert.equal(c4242.lastDate, '2026-07-09');
+  const c8787 = cards.find((c) => c.card === '8787');
+  assert.equal(c8787.firstDate, '2026-07-19');
 });
 
 test('suggestSuccessors: 選択カードの利用停止後に始まったカードを後継候補として返す', () => {
   const cards = [
-    { card: '5171', firstDate: '2026-03-01', lastDate: '2026-07-09' },
-    { card: '7474', firstDate: '2026-07-19', lastDate: '2026-09-03' },
-    { card: '1745', firstDate: '2026-02-02', lastDate: '2026-07-05' }, // 期間が重なるので後継ではない
+    { card: '4242', firstDate: '2026-03-01', lastDate: '2026-07-09' },
+    { card: '8787', firstDate: '2026-07-19', lastDate: '2026-09-03' },
+    { card: '9013', firstDate: '2026-02-02', lastDate: '2026-07-05' }, // 期間が重なるので後継ではない
   ];
-  const s = suggestSuccessors(cards, ['5171']);
+  const s = suggestSuccessors(cards, ['4242']);
   assert.deepEqual(
     s.map((c) => c.card),
-    ['7474']
+    ['8787']
   );
   // すでに両方選んでいれば提案しない
-  assert.deepEqual(suggestSuccessors(cards, ['5171', '7474']), []);
+  assert.deepEqual(suggestSuccessors(cards, ['4242', '8787']), []);
 });
 
 // ---------------------------------------------------------------- 期間フィルタ
@@ -556,14 +556,14 @@ test('convert: warnings に上書き用のキーと元金額が入る', () => {
 // 分割の要因は数量ではなく「出荷回数」(Ship Date が " and " 連結される)。
 test('convert: 複数出荷の明細は meta.splitShipment で注意喚起できる', () => {
   const row = orderRow(
-    'Visa - 7474',
+    'Visa - 8787',
     'Q',
     '2026-07-21T08:14:39.090Z and 2026-07-21T08:14:53.428Z',
     '収納ボックス',
     '9,900',
     'Closed'
   );
-  const { meta, notes } = convert([row], [], Object.assign({}, DEFAULTS, { cards: ['7474'] }));
+  const { meta, notes } = convert([row], [], Object.assign({}, DEFAULTS, { cards: ['8787'] }));
   assert.equal(meta.length, 1);
   assert.equal(meta[0].splitShipment, true);
   assert.equal(meta[0].shipmentCount, 2);
@@ -575,7 +575,7 @@ test('convert: 複数出荷の明細は meta.splitShipment で注意喚起でき
 
 test('convert: 数量2でも1回の出荷なら分割注記は出さない(誤検知防止)', () => {
   // 実データのセロテープ(564円・数量2)は EPOS 側でも1件のまま
-  const row = orderRow('Visa - 5171', 'S', '2026-06-10T00:00:00Z', 'セロテープ', '564', 'Closed');
+  const row = orderRow('Visa - 4242', 'S', '2026-06-10T00:00:00Z', 'セロテープ', '564', 'Closed');
   row['Original Quantity'] = '2';
   const { meta, notes } = convert([row], [], DEFAULTS);
   assert.equal(meta[0].splitShipment, false);
@@ -675,8 +675,8 @@ test('convert: どの注文にも当たらない上書きは握り潰さず表�
 test('convert: 1注文が複数グループに割れる場合は Order ID 単独キーを使わない', () => {
   // 同じ注文が別々の日に出荷 → どちらに当てるべきか決まらないので誤適用しない
   const rows = [
-    orderRow('Visa - 5171', 'M', '2026-07-01T00:00:00Z', '前半', '1,000', 'Closed'),
-    orderRow('Visa - 5171', 'M', '2026-07-05T00:00:00Z', '後半', '2,000', 'Closed'),
+    orderRow('Visa - 4242', 'M', '2026-07-01T00:00:00Z', '前半', '1,000', 'Closed'),
+    orderRow('Visa - 4242', 'M', '2026-07-05T00:00:00Z', '後半', '2,000', 'Closed'),
   ];
   const r = convert(rows, [], Object.assign({}, DEFAULTS, { amountOverrides: { M: 500 } }));
   assert.equal(r.rows.length, 2);
@@ -784,7 +784,7 @@ test('shortenName: 宣伝ブロックを落として詰める', () => {
     'ニトリ 毎日とりかえキッチンスポンジ'
   );
   assert.equal(shortenName('【Amazon限定】[2個セット]石けん'), '石けん');
-  assert.equal(shortenName('レノア ハピネス【大容量】柔軟剤'), 'レノア ハピネス 柔軟剤');
+  assert.equal(shortenName('フローラル ハピネス【大容量】柔軟剤'), 'フローラル ハピネス 柔軟剤');
 });
 
 test('shortenName: 開き括弧と同じ種類の閉じ括弧で1組にする', () => {
@@ -899,7 +899,7 @@ test('convert: 既定(full)は商品名の箇条書き(注文IDなし) / memo=no
 test('convert: メモに返金の注記が入る', () => {
   const { rows } = convert(FIXTURE_ORDERS, FIXTURE_REFUNDS, DEFAULTS);
   const { COL } = require('./core.js');
-  const b = rows.find((r) => r[COL.item] === 'レノア');
+  const b = rows.find((r) => r[COL.item] === '柔軟剤');
   assert.ok(b[COL.memo].includes('返金200円を差引済み'), b[COL.memo]);
 });
 
@@ -907,7 +907,7 @@ test('convert: 返金とギフト券併用が重なっても両方の注記が�
   // 片方を else if にすると、返金がある注文だけギフト券の注記が静かに消える
   const rows = [
     orderRow(
-      'Gift Certificate/Card and Visa - 5171',
+      'Gift Certificate/Card and Visa - 4242',
       'G',
       '2026-06-01T00:00:00Z',
       'ギフト券+返金',
@@ -939,7 +939,7 @@ test('convert: 実請求額を上書きしたらメモにも残る', () => {
 
 test('convert: 複数出荷の注記がメモに入る', () => {
   const row = orderRow(
-    'Visa - 5171',
+    'Visa - 4242',
     'S',
     '2026-07-21T08:00:00Z and 2026-07-21T08:00:10Z',
     '収納ボックス',
@@ -999,8 +999,8 @@ const LONG_NAME_A =
 const LONG_NAME_B =
   'サンプル浄水器ポット型 交換用カートリッジ 6個入 高除去タイプ 日本仕様 正規品';
 const LONG_ORDERS = [
-  orderRow('Visa - 5171', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_A, '1,375', 'Closed'),
-  orderRow('Visa - 5171', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_B, '2,625', 'Closed'),
+  orderRow('Visa - 4242', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_A, '1,375', 'Closed'),
+  orderRow('Visa - 4242', '503-1000012-0000122', '2026-06-05T04:00:00Z', LONG_NAME_B, '2,625', 'Closed'),
   ...FIXTURE_ORDERS,
 ];
 
@@ -1091,7 +1091,7 @@ test('convert: memo=full で注記3種(返金・ギフト券・分割出荷)が�
   // 商品名を先に詰める実装だと、注記が末尾から押し出されて静かに消える
   const { COL } = require('./core.js');
   const row = orderRow(
-    'Gift Certificate/Card and Visa - 5171',
+    'Gift Certificate/Card and Visa - 4242',
     'T',
     '2026-06-01T00:00:00Z and 2026-06-02T00:00:00Z',
     `${LONG_NAME_A}${LONG_NAME_B}`, // わざと長い商品名
@@ -1138,8 +1138,8 @@ test('convert: splitByItem でも同名商品は1行に ×N でまとまる', ()
 // ------------------------------------------------------------- §9-6 返金の按分
 test('convert: 1商品の額を超える返金は注文内の他の行へ繰り越す(過大計上の防止)', () => {
   const orders = [
-    orderRow('Visa - 5171', 'R', '2026-06-01T00:00:00Z', '安い品', '500', 'Closed'),
-    orderRow('Visa - 5171', 'R', '2026-06-01T00:00:00Z', '高い品', '2,000', 'Closed'),
+    orderRow('Visa - 4242', 'R', '2026-06-01T00:00:00Z', '安い品', '500', 'Closed'),
+    orderRow('Visa - 4242', 'R', '2026-06-01T00:00:00Z', '高い品', '2,000', 'Closed'),
   ];
   const refunds = [{ 'Order ID': 'R', 'Refund Amount': '2200' }];
   const { rows } = convert(orders, refunds, { ...DEFAULTS, splitByItem: true });
@@ -1152,7 +1152,7 @@ test('convert: 1商品の額を超える返金は注文内の他の行へ繰り�
 
 test('convert: 使い切れなかった返金は握り潰さず注記に出す', () => {
   const orders = [
-    orderRow('Visa - 5171', 'R2', '2026-06-01T00:00:00Z', '品', '1,000', 'Closed'),
+    orderRow('Visa - 4242', 'R2', '2026-06-01T00:00:00Z', '品', '1,000', 'Closed'),
   ];
   const { rows, notes } = convert(orders, [{ 'Order ID': 'R2', 'Refund Amount': '3000' }], DEFAULTS);
   assert.equal(rows.length, 0);
@@ -1164,8 +1164,8 @@ test('convert: 使い切れなかった返金は握り潰さず注記に出す',
 
 test('convert: 返金は発送日が新しいグループから順に充当する(合算モードは従来どおり)', () => {
   const orders = [
-    orderRow('Visa - 5171', 'Y2', '2026-06-01T00:00:00Z', '先発送', '1,000', 'Closed'),
-    orderRow('Visa - 5171', 'Y2', '2026-06-05T00:00:00Z', '後発送', '2,000', 'Closed'),
+    orderRow('Visa - 4242', 'Y2', '2026-06-01T00:00:00Z', '先発送', '1,000', 'Closed'),
+    orderRow('Visa - 4242', 'Y2', '2026-06-05T00:00:00Z', '後発送', '2,000', 'Closed'),
   ];
   const { rows } = convert(orders, [{ 'Order ID': 'Y2', 'Refund Amount': '2,500' }], DEFAULTS);
   // 後発送(2,000)を使い切り、残り500を先発送から引く

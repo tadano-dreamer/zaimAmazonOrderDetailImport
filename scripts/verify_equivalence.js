@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * 等価性検証: web/js/core.js の出力が Python 版ゴールデン出力
- * (data/output/zaim_import_5171.csv)と一致することを確認する。
+ * (data/output/zaim_import_<カード下4桁>.csv)と一致することを確認する。
  *
- *   実行: node scripts/verify_equivalence.js
+ *   実行: REAL_CARD=<カード下4桁> node scripts/verify_equivalence.js
+ *   (実際の番号は公開リポジトリに置かないので、環境変数で渡す)
  *
  * 実データ(data/ 配下・PII 含む・gitignore 対象)が必要。CI では実行しない。
  */
@@ -16,7 +17,8 @@ const core = require('../web/js/core.js');
 const ROOT = path.resolve(__dirname, '..');
 const ORDER_CSV = path.join(ROOT, 'data', 'Your Orders', 'Your Amazon Orders', 'Order History.csv');
 const REFUND_CSV = path.join(ROOT, 'data', 'Your Orders', 'Your Returns & Refunds', 'Refund Details.csv');
-const GOLDEN_CSV = path.join(ROOT, 'data', 'output', 'zaim_import_5171.csv');
+const REAL_CARD = process.env.REAL_CARD || '';
+const GOLDEN_CSV = path.join(ROOT, 'data', 'output', `zaim_import_${REAL_CARD}.csv`);
 
 function fail(msg) {
   console.error(`[NG] ${msg}`);
@@ -31,6 +33,11 @@ function normalizeLines(text) {
 }
 
 function main() {
+  if (!REAL_CARD) {
+    console.error('[SKIP] 環境変数 REAL_CARD(実データのカード下4桁)が未設定です');
+    process.exitCode = 2;
+    return;
+  }
   for (const p of [ORDER_CSV, GOLDEN_CSV]) {
     if (!fs.existsSync(p)) {
       console.error(`[SKIP] 実データが見つかりません: ${p}`);
@@ -45,7 +52,7 @@ function main() {
     : [];
   console.log(`[INFO] Order History.csv: ${orderRows.length} 明細 / Refund: ${refundRows.length} 行`);
 
-  const { rows, notes } = core.convert(orderRows, refundRows, {});
+  const { rows, notes } = core.convert(orderRows, refundRows, { cards: [REAL_CARD] });
   const summary = core.summarize(rows);
   console.log(
     `[INFO] JS 出力: ${summary.count} エントリ / 合計 ${summary.total.toLocaleString()} 円 / ` +

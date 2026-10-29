@@ -98,7 +98,7 @@ function makeData(seed) {
         name,
         amount.toLocaleString('en-US'),
         rand() < 0.08 ? 'Cancelled' : 'Closed',
-        rand() < 0.2 ? 'Gift Certificate/Card and Visa - 5171' : 'Visa - 5171',
+        rand() < 0.2 ? 'Gift Certificate/Card and Visa - 4242' : 'Visa - 4242',
       ]);
     }
     // 返金: 一部 / 全額 / 明細合計を超える額(按分を使い切る)を混ぜる
@@ -164,7 +164,7 @@ function main() {
         python,
         [
           path.join(REPO, 'scripts', 'amazon_to_zaim.py'),
-          '--base', WORK, '--card', '5171', '--out', out,
+          '--base', WORK, '--card', '4242', '--out', out,
           ...mode.cli,
         ],
         { stdio: 'pipe', encoding: 'utf8' }

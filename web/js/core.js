@@ -105,7 +105,7 @@
   const BOM = '﻿';
 
   const DEFAULT_OPTIONS = {
-    card: '5171',
+    card: '4242', // ダミーデータの主カード。実データでは画面で選んだ番号を cards で渡す
     cards: null, // 配列を渡すと複数カードを合算(カード再発行で下4桁が変わるケース用)
     category: '生活費',
     subcategory: SUBCATEGORY_CHOICES[0].value,
@@ -348,8 +348,8 @@
   /**
    * Order History の Payment Method Type からカード(ブランド+下4桁)を検出し、
    * 明細件数と利用期間(初回・最終の計上日)付きで返す。件数降順。
-   * 例: [{card:"5171", brand:"Visa", count:56, firstDate:"2025-03-27",
-   *       lastDate:"2026-07-09", label:"Visa - 5171(56件)"}, ...]
+   * 例: [{card:"4242", brand:"Visa", count:56, firstDate:"2025-03-27",
+   *       lastDate:"2026-07-09", label:"Visa - 4242(56件)"}, ...]
    *
    * period({from, to}・'' は端なし)を渡すと、各カードにその期間の明細件数
    * `periodCount` を足す。画面で「この期間に使ったカード」だけを前に出すため
@@ -382,7 +382,7 @@
         };
         e.count += 1;
         if (date && inRange(date, from, to)) e.periodCount += 1;
-        // ギフト券併用表記("...Card and Visa - 5171")より素のブランド名を優先
+        // ギフト券併用表記("...Card and Visa - 4242")より素のブランド名を優先
         if (!e.brand || brand.length < e.brand.length) e.brand = brand;
         if (date) {
           if (!e.firstDate || date < e.firstDate) e.firstDate = date;

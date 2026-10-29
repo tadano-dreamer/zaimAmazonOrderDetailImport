@@ -12,14 +12,21 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { webkit, chromium, devices } = require('playwright');
+const playwright = require('playwright');
+const { chromium, devices } = playwright;
+// WebKit の実行ファイルが PC のアプリ制御ポリシーで起動できない環境(spawn UNKNOWN)では、
+// E2E_NO_WEBKIT=1 で WebKit の場面も Chromium で流す(iPhone の viewport・UA は同じ。描画は Blink)。
+const webkit = process.env.E2E_NO_WEBKIT ? chromium : playwright.webkit;
 
 const REPO = path.resolve(__dirname, '..');
 const WEB_ROOT = path.join(REPO, 'web');
 const REAL_ZIP = path.join(REPO, 'data', 'Your Orders.zip');
-const REAL_GOLDEN = path.join(REPO, 'data', 'output', 'zaim_import_5171.csv');
+// 実データのカード下4桁は環境変数で渡す(公開リポジトリに実際の番号を置かないため)。
+// 例: REAL_CARD=1234 node tests/e2e.cjs。未指定なら実データのシナリオは飛ばす。
+const REAL_CARD = process.env.REAL_CARD || '';
+const REAL_GOLDEN = path.join(REPO, 'data', 'output', `zaim_import_${REAL_CARD}.csv`);
 const DUMMY_ZIP = path.join(REPO, 'testdata', 'dummy', 'Your Orders.zip');
-const DUMMY_GOLDEN = path.join(REPO, 'testdata', 'dummy', 'output', 'zaim_import_5171.csv');
+const DUMMY_GOLDEN = path.join(REPO, 'testdata', 'dummy', 'output', 'zaim_import_4242.csv');
 const SHOT_DIR = path.join(__dirname, 'screenshots'); // gitignore 対象(実データの品目名が写り得るため)
 const PORT = 8899;
 
@@ -178,7 +185,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   errors.length = 0;
 
   // --- シナリオ A: 実 ZIP 投入 → ゴールデン一致 ----------------------------
-  if (fs.existsSync(REAL_ZIP)) {
+  if (REAL_CARD && fs.existsSync(REAL_ZIP)) {
     await page.setInputFiles('#zip-input', REAL_ZIP);
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 60000 });
     check(true, '実ZIP(19MB)を読み込めた');
@@ -188,11 +195,13 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
       '実ZIPでエラーなし'
     );
 
+    // 読込直後は直近の月が選ばれる(期間先行の選択)。この場面は全期間のゴールデンと比べる
+    await page.selectOption('#period-select', 'all');
     const cardValues = await listCards(page);
     check(cardValues.length >= 2, `カードが複数検出される(${cardValues.length}種)`);
-    check(cardValues.includes('5171'), `5171 が検出される(${cardValues.join(',')})`);
+    check(cardValues.includes(REAL_CARD), `${REAL_CARD} が検出される(${cardValues.join(',')})`);
 
-    await selectCards(page, ['5171']);
+    await selectCards(page, [REAL_CARD]);
     await page.waitForFunction(
       () => document.getElementById('sum-count').textContent !== '–'
     );
@@ -203,7 +212,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     check(total === '126,896円', `合計 126,896円 → ${total}`);
     check(range === '2025-03-27 〜 2026-07-09', `期間 → ${range}`);
 
-    // ギフト券併用警告が出る(実データに Matdeco 併用あり)
+    // ギフト券併用警告が出る(実データにギフト券併用あり)
     check(await page.isVisible('#gift-warnings'), 'ギフト券併用の警告表示');
     // 返金の処理メモ
     check(await page.isVisible('#notes-box'), '処理メモ(返金反映)表示');
@@ -282,8 +291,8 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     };
   });
   check(
-    ['5171', '7474'].every((c) => cardLayout.front.includes(c)) &&
-      cardLayout.folded.join(',') === '1002',
+    ['4242', '8787'].every((c) => cardLayout.front.includes(c)) &&
+      cardLayout.folded.join(',') === '3081',
     `7月に使ったカードだけ前に出て、使っていないカードは畳まれる → 前:${cardLayout.front} 畳:${cardLayout.folded}`
   );
   check(
@@ -292,17 +301,17 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
   await page.selectOption('#period-select', '2026-06');
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('#card-list > label input')].every((b) => b.value !== '7474')
+    [...document.querySelectorAll('#card-list > label input')].every((b) => b.value !== '8787')
   );
   const juneFront = await page.$$eval('#card-list > label input', (bs) => bs.map((b) => b.value).sort());
   check(
-    juneFront.includes('1002') && !juneFront.includes('7474'),
+    juneFront.includes('3081') && !juneFront.includes('8787'),
     `期間を変えるとカード一覧も変わる(6月) → ${juneFront}`
   );
 
   // --- シナリオ C: ダミー ZIP(全期間) --------------------------------------
   await page.selectOption('#period-select', 'all');
-  await selectCards(page, ['5171']);
+  await selectCards(page, ['4242']);
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '6件'
   );
@@ -333,20 +342,20 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
   await page.screenshot({ path: path.join(SHOT_DIR, `${shotPrefix}-04-dummy-preview.png`), fullPage: true });
 
-  // --- シナリオ E: カード更新(5171 → 7474)への追従 -----------------------
-  // 実データでは 2026-07 にカードが切り替わり、5171 だけ選ぶと 41,139 円が消えた。
+  // --- シナリオ E: カード更新(4242 → 8787)への追従 -----------------------
+  // 実データでは 2026-07 にカードが切り替わり、4242 だけ選ぶと 41,139 円が消えた。
   check(await page.isVisible('#card-switch-note'), 'ダミー: カード切替の警告が出る');
   const switchText = await page.textContent('#card-switch-note');
-  check(switchText.includes('7474'), `警告に後継カード 7474 が出る → ${switchText.slice(0, 40)}…`);
+  check(switchText.includes('8787'), `警告に後継カード 8787 が出る → ${switchText.slice(0, 40)}…`);
 
   await page.click('#card-switch-note button');
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '9件'
   );
-  check((await page.textContent('#sum-count')) === '9件', '「追加」で 5171+7474 の 9件になる');
+  check((await page.textContent('#sum-count')) === '9件', '「追加」で 4242+8787 の 9件になる');
   check(
     (await page.textContent('#sum-total')) === '33,718円',
-    `5171+7474 合計 33,718円 → ${await page.textContent('#sum-total')}`
+    `4242+8787 合計 33,718円 → ${await page.textContent('#sum-total')}`
   );
   check(await page.isHidden('#card-switch-note'), '両方選ぶと切替警告が消える');
   check(
@@ -430,10 +439,10 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
 
   // --- シナリオ F3: 期間がカードのデータ範囲外になったら全期間へ戻す -----------
-  // 7月を選んでから、7月に明細が無いカード(Amex 1002 = 6/21のみ)へ切り替える
+  // 7月を選んでから、7月に明細が無いカード(Amex 3081 = 6/21のみ)へ切り替える
   await page.selectOption('#period-select', '2026-07');
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '5件');
-  await selectCards(page, ['1002']);
+  await selectCards(page, ['3081']);
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '1件');
   check(
     (await page.inputValue('#period-select')) === 'all',
@@ -445,17 +454,17 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
       (await page.inputValue('#period-to')) === '2026-07-24',
     `日付はデータ全体の範囲に戻る → ${await page.inputValue('#period-from')} 〜 ${await page.inputValue('#period-to')}`
   );
-  await selectCards(page, ['5171', '7474']);
+  await selectCards(page, ['4242', '8787']);
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '9件');
 
   // --- シナリオ F4: 日付欄の片側だけ編集しても、もう一方は確定させない ---------
   // 日付欄は未指定のときデータ全体の端を「表示上の初期値」として出しているだけ。
   // それを確定させると、後からカードを足したときにその日より前が無警告で落ちる。
-  await selectCards(page, ['7474']); // 利用期間 2026-07-20〜2026-07-24
+  await selectCards(page, ['8787']); // 利用期間 2026-07-20〜2026-07-24
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '3件');
   await page.fill('#period-to', '2026-07-21'); // 終了日だけを編集(開始日は触らない)
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '1件');
-  await selectCards(page, ['5171', '7474']); // 開始が古い 5171 を追加
+  await selectCards(page, ['4242', '8787']); // 開始が古い 4242 を追加
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '7件');
   check(
     (await page.textContent('#sum-total')) === '20,818円',
@@ -539,7 +548,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   // 元に戻す(以降のシナリオへの影響を避ける)
   await giftInput.fill('');
   await giftInput.blur();
-  await selectCards(page, ['5171']);
+  await selectCards(page, ['4242']);
   await page.selectOption('#period-select', 'all');
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '6件'
@@ -573,7 +582,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   );
 
   // 外したままカードを足す: 増えた行は既定でチェック済み、外した行は外れたまま
-  await selectCards(page, ['5171', '7474']);
+  await selectCards(page, ['4242', '8787']);
   await page.waitForFunction(
     () => document.getElementById('sum-count').textContent === '8件(全9件中)'
   );
@@ -668,8 +677,8 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   check((await page.textContent('#sum-count')) === '9件', '出荷単位に戻すと9件');
   await openAdvanced(page, false);
 
-  // 5171 のみ・全期間に戻す(以降のシナリオへの影響を避ける)
-  await selectCards(page, ['5171']);
+  // 4242 のみ・全期間に戻す(以降のシナリオへの影響を避ける)
+  await selectCards(page, ['4242']);
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
 
   // --- シナリオ H: 同じ ZIP を選び直しても、期間の表示と実際の出力範囲が一致する ---
@@ -681,7 +690,7 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
     document.getElementById('load-status').textContent = '';
   });
   await page.setInputFiles('#zip-input', []);
-  await page.setInputFiles('#zip-input', DUMMY_ZIP); // カード選択も 5171 のまま復元される
+  await page.setInputFiles('#zip-input', DUMMY_ZIP); // カード選択も 4242 のまま復元される
   await page.waitForFunction(
     () => document.getElementById('load-status').textContent.includes('読み込み完了'),
     null,
@@ -690,14 +699,14 @@ async function runScenarios(browserName, page, errors, shotPrefix) {
   const reloadedPeriod = await page.inputValue('#period-select');
   const reloadedCount = await page.textContent('#sum-count');
   check(reloadedPeriod === '2026-07', `ZIP再選択で期間は既定(最新月)に戻る → ${reloadedPeriod}`);
-  // 前回選んだ 5171 が記憶から選ばれ、7月なら2件。表示と中身が矛盾していないこと
+  // 前回選んだ 4242 が記憶から選ばれ、7月なら2件。表示と中身が矛盾していないこと
   check(
     reloadedCount === '2件',
     `表示(${reloadedPeriod})と実際の出力件数(${reloadedCount})が矛盾しない`
   );
   check(
-    (await page.$$eval('#card-list input:checked', (bs) => bs.map((b) => b.value))).join(',') === '5171',
-    '前回選んだカード(5171)が記憶されて選ばれる'
+    (await page.$$eval('#card-list input:checked', (bs) => bs.map((b) => b.value))).join(',') === '4242',
+    '前回選んだカード(4242)が記憶されて選ばれる'
   );
   await page.selectOption('#period-select', 'all');
   await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
@@ -779,7 +788,11 @@ async function main() {
   // 1) iPhone 14(WebKit ― iOS の Chrome/Safari 実体エンジン)
   {
     const browser = await webkit.launch();
-    const ctx = await browser.newContext({ ...devices['iPhone 14'] });
+    const ctx = await browser.newContext({
+      ...devices['iPhone 14'],
+      // Chromium で代用するときだけ clipboard を許可する(WebKit はこの permission 名を受け付けない)
+      ...(process.env.E2E_NO_WEBKIT ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}),
+    });
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -847,7 +860,7 @@ async function main() {
     const status = await page.textContent('#load-status');
     check(status.includes('統合'), `統合の注記が表示される: "${status}"`);
     await page.selectOption('#period-select', 'all');
-    await selectCards(page, ['5171']);
+    await selectCards(page, ['4242']);
     await page.waitForFunction(() => document.getElementById('sum-count').textContent === '6件');
     check((await page.textContent('#sum-count')) === '6件', '分割ZIP: 件数 6件(全パーツ読込)');
     check(
@@ -874,7 +887,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.setInputFiles('#zip-input', DUMMY_ZIP);
     await page.waitForSelector('#settings-section:not([hidden])', { timeout: 30000 });
-    await selectCards(page, ['5171']);
+    await selectCards(page, ['4242']);
     const overflow = await page.evaluate(
       // innerWidth はモバイルエミュレーション時に実幅より大きくなり溢れを隠すので、
       // clientWidth(スクロールバーを除いた実表示幅)と比べる

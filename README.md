@@ -38,11 +38,11 @@ PC 用 CLI(`scripts/amazon_to_zaim.py`)は参照実装(oracle)として維持。
 
 ```bash
 node --test web/js/core.test.js        # 単体テスト(102件)
-node scripts/verify_equivalence.js     # 実データ vs ゴールデンCSV(要 data/)
+REAL_CARD=<下4桁> node scripts/verify_equivalence.js  # 実データ vs ゴールデンCSV(要 data/。実際の番号は環境変数で渡す)
 node scripts/verify_dummy.js           # ダミーデータ vs Python参照実装
 node scripts/verify_parity_fuzz.js     # JS↔Python 同値性(ランダム生成データ・要python)
 cd tests && npm install && npx playwright install chromium webkit
-node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュレーション)
+node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュレーション。REAL_CARD を渡すと実データの場面も流す)
 ```
 
 ダミーデータ(PIIなし・本番と同一構造)は `node scripts/make_dummy_data.js` で再生成できる。
@@ -80,41 +80,41 @@ node tests/e2e.cjs                     # E2E(iPhone WebKit + Chromium エミュ�
     ├── Your Orders.zip      #   Amazonからダウンロードした履歴ZIP
     ├── Your Orders/         #   解凍済み(Order History.csv 等)
     └── output/              #   生成された Zaim 取込用 CSV
-        └── zaim_import_5171.csv
+        └── zaim_import_<card>.csv
 ```
 
 ## 使い方(CLI)
 
 ```bash
-# 既定: カード5171 / 生活費・ゆうすけAmazon / 発送日JST / 出荷単位で合算 / 返金差引
-python scripts/amazon_to_zaim.py
+# カード下4桁は必須(手元の履歴にある番号を指定)。既定: 生活費・ゆうすけAmazon / 発送日JST / 出荷単位で合算 / 返金差引
+python scripts/amazon_to_zaim.py --card 4242
 
 # 別カードで抽出
-python scripts/amazon_to_zaim.py --card 1745
+python scripts/amazon_to_zaim.py --card 9013
 
 # カード更新で下4桁が変わった場合は両方指定(片方だけだと切替以降が丸ごと落ちる)
-python scripts/amazon_to_zaim.py --card 5171,7474
+python scripts/amazon_to_zaim.py --card 4242,8787
 
 # 月次で取り込む
-python scripts/amazon_to_zaim.py --card 5171,7474 --month 2026-07
+python scripts/amazon_to_zaim.py --card 4242,8787 --month 2026-07
 
 # 日単位で取り込む(取り込み済みの翌日から、など)
-python scripts/amazon_to_zaim.py --card 5171,7474 --from 2026-07-19 --to 2026-07-21
+python scripts/amazon_to_zaim.py --card 4242,8787 --from 2026-07-19 --to 2026-07-21
 
 # ZIPから解凍込みで実行(data/ に Your Orders.zip がある前提)
-python scripts/amazon_to_zaim.py --zip "Your Orders.zip"
+python scripts/amazon_to_zaim.py --card 4242 --zip "Your Orders.zip"
 
 # タイムゾーンをUTCに / 支払元を明示指定(既定は内訳から決まる)
-python scripts/amazon_to_zaim.py --tz utc --source "楽天カード"
+python scripts/amazon_to_zaim.py --card 4242 --tz utc --source "楽天カード"
 
 # カテゴリの内訳を切り替える(支払元も ともEPOS に自動で切り替わる)
-python scripts/amazon_to_zaim.py --subcategory ともかAmazon
+python scripts/amazon_to_zaim.py --card 4242 --subcategory ともかAmazon
 
 # 同じ支払いでも商品ごとに1行にする(Zaim上は別レコード・合計は変わらない)
-python scripts/amazon_to_zaim.py --split-items
+python scripts/amazon_to_zaim.py --card 4242 --split-items
 
 # メモを注記と注文IDだけにする(既定は商品名の箇条書き+注記。どの設定でも100文字で切る)
-python scripts/amazon_to_zaim.py --memo notes
+python scripts/amazon_to_zaim.py --card 4242 --memo notes
 ```
 
 出力は `data/output/zaim_import_<card>.csv`(UTF-8 BOM 付き)に書き出される。

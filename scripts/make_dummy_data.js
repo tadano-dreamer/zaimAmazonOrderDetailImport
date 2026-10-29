@@ -14,9 +14,9 @@
  * 収録シナリオ(単体テストと同じ検証観点を実データ形式で再現):
  *   D001 同一注文2品を合算 / D002 部分返金 / D003 JST日跨ぎ+数量2 /
  *   D004 ギフト券併用 / D005 キャンセル除外 / D007 全額返金除外 /
- *   D008 単品 / D009 カード更新後の番号(7474) / D010 複数出荷(" and " 連結) /
+ *   D008 単品 / D009 カード更新後の番号(8787) / D010 複数出荷(" and " 連結) /
  *   D011 ギフト券併用 かつ 部分返金 / D012 商品名が長い2品(メモ100文字超の再現) /
- *   別カード(1745, Amex 1002)
+ *   別カード(9013, Amex 3081)
  */
 'use strict';
 
@@ -94,61 +94,61 @@ const ORDERS = [
   orderRow({
     asin: 'B0DUMMY0001', orderId: '503-1000001-0000011',
     orderDate: '2026-06-29T14:30:46Z', shipDate: '2026-06-30T03:50:57.832Z',
-    payment: 'Visa - 5171', total: 477, tracking: '498765432101',
+    payment: 'Visa - 4242', total: 477, tracking: '498765432101',
     name: 'サンプル紙皿 ホワイト 業務用 200枚入 使い捨て 22cm パーティー用',
   }),
   orderRow({
     asin: 'B0DUMMY0002', orderId: '503-1000001-0000011',
     orderDate: '2026-06-29T14:30:46Z', shipDate: '2026-06-30T03:50:57.832Z',
-    payment: 'Visa - 5171', total: 1180, tracking: '498765432101',
+    payment: 'Visa - 4242', total: 1180, tracking: '498765432101',
     name: 'サンプルウェットティッシュ ノンアルコール除菌 詰替 320枚(80枚×4個)',
   }),
   // D002: 部分返金あり → 1,811 − 200 = 1,611
   orderRow({
     asin: 'B0DUMMY0003', orderId: '503-1000002-0000022',
     orderDate: '2026-06-29T10:15:30Z', shipDate: '2026-06-30T11:28:44.120Z',
-    payment: 'Visa - 5171', total: 1811, tracking: '498765432102',
+    payment: 'Visa - 4242', total: 1811, tracking: '498765432102',
     name: 'サンプル柔軟剤 フローラルの香り 詰め替え 大容量 1900mL',
   }),
   // D003: JST 日跨ぎ(UTC 7/8 21:06 → JST 7/9)+ 同一商品2個 → ×2 で 4,740
   orderRow({
     asin: 'B0DUMMY0004', orderId: '503-1000003-0000033',
     orderDate: '2026-07-07T09:45:12Z', shipDate: '2026-07-08T21:06:11.011Z',
-    payment: 'Visa - 5171', total: 2370, tracking: '498765432103',
+    payment: 'Visa - 4242', total: 2370, tracking: '498765432103',
     name: 'サンプルフェイスタオル 綿100% 5枚組 ホテル仕様 (ネイビー)',
   }),
   orderRow({
     asin: 'B0DUMMY0004', orderId: '503-1000003-0000033',
     orderDate: '2026-07-07T09:45:12Z', shipDate: '2026-07-08T21:06:11.011Z',
-    payment: 'Visa - 5171', total: 2370, tracking: '498765432103',
+    payment: 'Visa - 4242', total: 2370, tracking: '498765432103',
     name: 'サンプルフェイスタオル 綿100% 5枚組 ホテル仕様 (ネイビー)',
   }),
   // D004: ギフト券併用 → 抽出されるが警告表示の対象
   orderRow({
     asin: 'B0DUMMY0005', orderId: '503-1000004-0000044',
     orderDate: '2026-05-19T02:10:05Z', shipDate: '2026-05-20T08:22:39.500Z',
-    payment: 'Gift Certificate/Card and Visa - 5171', total: 5760, tracking: '498765432104',
+    payment: 'Gift Certificate/Card and Visa - 4242', total: 5760, tracking: '498765432104',
     name: 'サンプル冷感敷きパッド セミダブル 夏用 リバーシブル 洗える (ブルー)',
   }),
   // D005: キャンセル → 除外される
   orderRow({
     asin: 'B0DUMMY0006', orderId: '503-1000005-0000055',
     orderDate: '2026-06-01T12:00:00Z', shipDate: '',
-    payment: 'Visa - 5171', total: 999, status: 'Cancelled',
+    payment: 'Visa - 4242', total: 999, status: 'Cancelled',
     name: 'サンプルキャンセル品 タンブラー 450mL',
   }),
   // D007: 全額返金 → net 0 円で出力されない
   orderRow({
     asin: 'B0DUMMY0007', orderId: '503-1000007-0000077',
     orderDate: '2026-06-10T03:33:21Z', shipDate: '2026-06-11T01:05:59.900Z',
-    payment: 'Visa - 5171', total: 1000, tracking: '498765432105',
+    payment: 'Visa - 4242', total: 1000, tracking: '498765432105',
     name: 'サンプル全額返金品 LED電球 60W相当 2個セット',
   }),
   // D008: 単品(品目にカンマ入り → CSV クオートの検証を兼ねる)
   orderRow({
     asin: 'B0DUMMY0008', orderId: '503-1000008-0000088',
     orderDate: '2026-07-04T22:11:08Z', shipDate: '2026-07-05T04:40:17.300Z',
-    payment: 'Visa - 5171', total: 1280, tracking: '498765432106',
+    payment: 'Visa - 4242', total: 1280, tracking: '498765432106',
     name: 'サンプルシャンプー 詰め替え用 400mL (無香料, 敏感肌用)',
   }),
   // D012: 商品名が長い2品の注文。実機で起きた不具合の再現ケース。
@@ -158,41 +158,41 @@ const ORDERS = [
   orderRow({
     asin: 'B0DUMMY0012', orderId: '503-1000012-0000122',
     orderDate: '2026-06-04T09:00:00Z', shipDate: '2026-06-05T04:00:00.000Z',
-    payment: 'Visa - 5171', total: 1375, tracking: '498765432110',
+    payment: 'Visa - 4242', total: 1375, tracking: '498765432110',
     name: 'サンプル乳液 モイスチャライジング つめかえ用 豆乳イソフラボン配合 130mL 医薬部外品',
   }),
   orderRow({
     asin: 'B0DUMMY0013', orderId: '503-1000012-0000122',
     orderDate: '2026-06-04T09:00:00Z', shipDate: '2026-06-05T04:00:00.000Z',
-    payment: 'Visa - 5171', total: 2625, tracking: '498765432110',
+    payment: 'Visa - 4242', total: 2625, tracking: '498765432110',
     name: 'サンプル浄水器ポット型 交換用カートリッジ 6個入 高除去タイプ 日本仕様 正規品',
   }),
-  // 別カード: Visa - 1745(プルダウン検証用・5171 では抽出されない)
+  // 別カード: Visa - 9013(プルダウン検証用・4242 では抽出されない)
   orderRow({
     asin: 'B0DUMMY0101', orderId: '503-2000001-0000111',
     orderDate: '2026-06-15T05:00:00Z', shipDate: '2026-06-16T02:30:00.000Z',
-    payment: 'Visa - 1745', total: 3480, tracking: '498765432201',
+    payment: 'Visa - 9013', total: 3480, tracking: '498765432201',
     name: 'サンプル収納ボックス 折りたたみ 3個セット (グレー)',
   }),
   orderRow({
     asin: 'B0DUMMY0102', orderId: '503-2000002-0000222',
     orderDate: '2026-07-01T08:20:00Z', shipDate: '2026-07-02T03:10:00.000Z',
-    payment: 'Visa - 1745', total: 890, tracking: '498765432202',
+    payment: 'Visa - 9013', total: 890, tracking: '498765432202',
     name: 'サンプル食器用スポンジ 10個入',
   }),
-  // 別カード: American Express - 1002(3種類目)
+  // 別カード: American Express - 3081(3種類目)
   orderRow({
     asin: 'B0DUMMY0201', orderId: '503-3000001-0000333',
     orderDate: '2026-06-20T11:11:11Z', shipDate: '2026-06-21T06:45:00.000Z',
-    payment: 'American Express - 1002', total: 12800, tracking: '498765432301',
+    payment: 'American Express - 3081', total: 12800, tracking: '498765432301',
     name: 'サンプル電気ケトル 1.0L 温度調節機能付き ブラック',
   }),
-  // D009: カード更新後の番号(Visa - 7474)。5171 の最終利用(7/9)より後にだけ現れる。
+  // D009: カード更新後の番号(Visa - 8787)。4242 の最終利用(7/9)より後にだけ現れる。
   //       下4桁1つで絞ると以降が丸ごと落ちるため、後継カード検出の対象になる。
   orderRow({
     asin: 'B0DUMMY0009', orderId: '503-1000009-0000099',
     orderDate: '2026-07-19T08:00:00Z', shipDate: '2026-07-20T02:26:04.088Z',
-    payment: 'Visa - 7474', total: 1770, tracking: '498765432107',
+    payment: 'Visa - 8787', total: 1770, tracking: '498765432107',
     name: 'サンプルキッチンスポンジ 30個入り×2個 合計60個 (グレー)',
   }),
   // D010: 1明細が2回に分けて出荷され、Ship Date が " and " で連結される。
@@ -201,7 +201,7 @@ const ORDERS = [
     asin: 'B0DUMMY0010', orderId: '503-1000010-0000100', qty: 2,
     orderDate: '2026-07-19T08:10:04Z',
     shipDate: '2026-07-22T08:14:39.090Z and 2026-07-22T08:14:53.428Z',
-    payment: 'Visa - 7474', total: 9900, tracking: '498765432108',
+    payment: 'Visa - 8787', total: 9900, tracking: '498765432108',
     name: 'サンプル収納ボックス キャスター付き 2個セット (ナチュラルオーク)',
   }),
   // D011: ギフト券併用 かつ 部分返金。メモに両方の注記が出ること(JS/Python 一致)を
@@ -209,7 +209,7 @@ const ORDERS = [
   orderRow({
     asin: 'B0DUMMY0011', orderId: '503-1000011-0000111',
     orderDate: '2026-07-23T01:00:00Z', shipDate: '2026-07-24T02:00:00.000Z',
-    payment: 'Gift Certificate/Card and Visa - 7474', total: 3300,
+    payment: 'Gift Certificate/Card and Visa - 8787', total: 3300,
     tracking: '498765432109',
     name: '【数量限定】サンプル加湿器 卓上 [USB給電] 静音 (ホワイト)',
   }),
@@ -291,9 +291,9 @@ async function main() {
   console.log(`     - Order History.csv: ${ORDERS.length} 明細(カード3種)`);
   console.log(`     - Refund Details.csv: ${REFUNDS.length} 返金`);
   console.log(`     - Your Orders.zip: ${(zipBuf.length / 1024).toFixed(1)} KB`);
-  console.log('期待値(card=5171, JST, 合算, 返金ネット):');
+  console.log('期待値(card=4242, JST, 合算, 返金ネット):');
   console.log('     6 エントリ / 合計 19,048 円 / 期間 2026-05-20 〜 2026-07-09');
-  console.log('期待値(card=7474 = 5171 の更新後番号):');
+  console.log('期待値(card=8787 = 4242 の更新後番号):');
   console.log('     3 エントリ / 合計 14,670 円 / 期間 2026-07-20 〜 2026-07-24');
 }
 

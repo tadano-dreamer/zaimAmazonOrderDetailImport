@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
  * ダミーデータ等価性検証: testdata/dummy を JS(core.js)で変換し、
- * Python 参照実装の出力(testdata/dummy/output/zaim_import_5171.csv)と比較する。
+ * Python 参照実装の出力(testdata/dummy/output/zaim_import_4242.csv)と比較する。
  *
  *   前提: node scripts/make_dummy_data.js
- *         python scripts/amazon_to_zaim.py --base "testdata/dummy"
+ *         python scripts/amazon_to_zaim.py --base testdata/dummy --card 4242
+ *         python scripts/amazon_to_zaim.py --base testdata/dummy --card 8787
+ *         python scripts/amazon_to_zaim.py --base testdata/dummy --card 4242 --memo notes --out zaim_import_4242_notes.csv
+ *         python scripts/amazon_to_zaim.py --base testdata/dummy --card 4242 --split-items --out zaim_import_4242_split.csv
  *   実行: node scripts/verify_dummy.js
  */
 'use strict';
@@ -16,8 +19,8 @@ const core = require('../web/js/core.js');
 const BASE = path.resolve(__dirname, '..', 'testdata', 'dummy');
 const ORDER_CSV = path.join(BASE, 'Your Orders', 'Your Amazon Orders', 'Order History.csv');
 const REFUND_CSV = path.join(BASE, 'Your Orders', 'Your Returns & Refunds', 'Refund Details.csv');
-const GOLDEN_CSV = path.join(BASE, 'output', 'zaim_import_5171.csv');
-const GOLDEN_CSV_7474 = path.join(BASE, 'output', 'zaim_import_7474.csv');
+const GOLDEN_CSV = path.join(BASE, 'output', 'zaim_import_4242.csv');
+const GOLDEN_CSV_8787 = path.join(BASE, 'output', 'zaim_import_8787.csv');
 
 let ok = true;
 function check(cond, label) {
@@ -59,30 +62,30 @@ for (let i = 0; i < Math.max(js.length, golden.length); i++) {
     check(false, `行 ${i + 1} 不一致:\n  JS    : ${js[i]}\n  golden: ${golden[i]}`);
   }
 }
-// --- カード更新(5171 → 7474)・期間フィルタ・複数出荷 -----------------------
+// --- カード更新(4242 → 8787)・期間フィルタ・複数出荷 -----------------------
 // カード下4桁1つで絞ると、更新後の番号で買った分が丸ごと落ちる(実データで発生済み)。
-const succ = core.suggestSuccessors(core.detectCards(orderRows), ['5171']);
+const succ = core.suggestSuccessors(core.detectCards(orderRows), ['4242']);
 check(
-  succ.some((c) => c.card === '7474'),
-  `5171 の後継カード候補として 7474 を検出 → ${succ.map((c) => c.card).join(',') || 'なし'}`
+  succ.some((c) => c.card === '8787'),
+  `4242 の後継カード候補として 8787 を検出 → ${succ.map((c) => c.card).join(',') || 'なし'}`
 );
 
-const newCard = core.convert(orderRows, refundRows, { cards: ['7474'] });
+const newCard = core.convert(orderRows, refundRows, { cards: ['8787'] });
 const sNew = core.summarize(newCard.rows);
-check(sNew.count === 3 && sNew.total === 14670, `7474 単体 → ${sNew.count}件 / ${sNew.total}円`);
-// 7474 側にはギフト券併用かつ部分返金の注文が入っている。メモの注記は
+check(sNew.count === 3 && sNew.total === 14670, `8787 単体 → ${sNew.count}件 / ${sNew.total}円`);
+// 8787 側にはギフト券併用かつ部分返金の注文が入っている。メモの注記は
 // 片方を elif にすると静かに消えるので、Python 出力とバイト単位で突き合わせる。
-const js7474 = toLines(core.generateCsv(newCard.rows));
-const golden7474 = toLines(fs.readFileSync(GOLDEN_CSV_7474, 'utf8'));
+const js8787 = toLines(core.generateCsv(newCard.rows));
+const golden8787 = toLines(fs.readFileSync(GOLDEN_CSV_8787, 'utf8'));
 check(
-  js7474.length === golden7474.length && js7474.every((l, i) => l === golden7474[i]),
-  '7474: JS 出力が Python 参照実装と一致(メモの注記含む)'
+  js8787.length === golden8787.length && js8787.every((l, i) => l === golden8787[i]),
+  '8787: JS 出力が Python 参照実装と一致(メモの注記含む)'
 );
-for (let i = 0; i < Math.max(js7474.length, golden7474.length); i++) {
-  if (js7474[i] !== golden7474[i]) {
+for (let i = 0; i < Math.max(js8787.length, golden8787.length); i++) {
+  if (js8787[i] !== golden8787[i]) {
     console.log(`     行 ${i + 1}:`);
-    console.log(`       JS    : ${js7474[i]}`);
-    console.log(`       golden: ${golden7474[i]}`);
+    console.log(`       JS    : ${js8787[i]}`);
+    console.log(`       golden: ${golden8787[i]}`);
   }
 }
 const giftRefundRow = newCard.rows.find((r) => r[core.COL.date] === '2026-07-24');
@@ -96,15 +99,15 @@ check(
   '複数出荷(" and " 連結)の分割計上メモあり'
 );
 
-const bothCards = core.convert(orderRows, refundRows, { cards: ['5171', '7474'] });
+const bothCards = core.convert(orderRows, refundRows, { cards: ['4242', '8787'] });
 const sBoth = core.summarize(bothCards.rows);
 check(
   sBoth.count === 9 && sBoth.total === 19048 + 14670,
-  `5171+7474 合算 → ${sBoth.count}件 / ${sBoth.total}円`
+  `4242+8787 合算 → ${sBoth.count}件 / ${sBoth.total}円`
 );
 
 const july = core.convert(orderRows, refundRows, {
-  cards: ['5171', '7474'],
+  cards: ['4242', '8787'],
   dateFrom: '2026-07-01',
   dateTo: '2026-07-31',
 });
@@ -148,7 +151,7 @@ for (const [label, opt] of [
   ['商品ごとに1行', { splitByItem: true }],
   ['明細ごと', { aggregate: false }],
 ]) {
-  const out = core.convert(orderRows, refundRows, Object.assign({ cards: ['5171', '7474'] }, opt));
+  const out = core.convert(orderRows, refundRows, Object.assign({ cards: ['4242', '8787'] }, opt));
   const tooLongMemo = out.rows.filter((r) => charLen(r[core.COL.memo]) > core.FIELD_MAX_LEN);
   const tooLongItem = out.rows.filter((r) => charLen(r[core.COL.item]) > core.ITEM_FIELD_MAX);
   check(
@@ -188,7 +191,7 @@ check(
 
 // --- 商品ごとに1行(splitByItem)------------------------------------------
 const bothSplit = core.convert(orderRows, refundRows, {
-  cards: ['5171', '7474'],
+  cards: ['4242', '8787'],
   splitByItem: true,
 });
 const sSplit = core.summarize(bothSplit.rows);
@@ -201,7 +204,7 @@ check(
   new Set(bothSplit.meta.map((m) => m.key)).size === bothSplit.meta.length,
   '商品ごとに1行でも meta.key が一意(行の選択が壊れない)'
 );
-const detail = core.convert(orderRows, refundRows, { cards: ['5171', '7474'], aggregate: false });
+const detail = core.convert(orderRows, refundRows, { cards: ['4242', '8787'], aggregate: false });
 check(
   new Set(detail.meta.map((m) => m.key)).size === detail.meta.length &&
     detail.meta.every((m) => m.key),
@@ -228,8 +231,8 @@ check(
 // JS と Python は別々に書いた同じロジックなので、切り詰めの計算が1文字ずれただけでも
 // 出力が食い違う。モードごとにゴールデンを持って機械的に突き合わせる。
 for (const [label, opt, goldenPath] of [
-  ['memo=notes', { memo: 'notes' }, path.join(BASE, 'output', 'zaim_import_5171_notes.csv')],
-  ['商品ごとに1行', { splitByItem: true }, path.join(BASE, 'output', 'zaim_import_5171_split.csv')],
+  ['memo=notes', { memo: 'notes' }, path.join(BASE, 'output', 'zaim_import_4242_notes.csv')],
+  ['商品ごとに1行', { splitByItem: true }, path.join(BASE, 'output', 'zaim_import_4242_split.csv')],
 ]) {
   const js = toLines(core.generateCsv(core.convert(orderRows, refundRows, opt).rows));
   const golden = toLines(fs.readFileSync(goldenPath, 'utf8'));

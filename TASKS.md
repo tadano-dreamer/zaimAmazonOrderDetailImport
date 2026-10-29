@@ -10,11 +10,11 @@
 # ============================================================================
 
 project: zaim-amazon-import      # ★必須。manager 側の id。変えない
-updated_at: 2026-10-15T23:09:06+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
+updated_at: 2026-10-29T12:37:00+09:00   # ★必須。タイムゾーン必須。この値が古いと manager が「未報告」として拾う
 mode: issues_only                # ★必須。summary | issues_only | detail（下の「粒度の選び方」参照）
 health: green                    # ★必須。green | yellow | red
 phase: 実装と実機 Zaim への取込テストまで完了し、実データを月ごとに取り込む運用段階   # ★必須
-next_action: 10月分を翌月に CSV にして Zaim に取り込む（9月分は取込済み・以降は月次）   # ★必須。manager が「今日やること」に使う
+next_action: 10月分を 11月に CSV にして Zaim に取り込む（9月分は取込済み・以降は月次）。公開中の家族の名前（zaim-amazon-import-002）は User の判断待ち   # ★必須。manager が「今日やること」に使う
 
 # manager からの依頼に対応したら、ここに積む（manager の state/outbox/zaim-amazon-import.md を参照）
 # 🔴 id だけ書いて effect を省かない。「見た」ではなく「やった」の証拠を書く（I-5）。
@@ -31,19 +31,20 @@ manager_ack:
 # 未完のものだけ。完了したら消して recently_closed へ移す。
 # 🔴 20件以内。全部を載せない（I-15）。載せる基準は下の「何を載せるか」。
 # 🔴 このリポジトリは public。タスク名や done_when に実データの値を書かない（CLAUDE.md の留意事項）。
+# 採番カウンタ: 使用済みの最大番号 002（次は 003）
 open_tasks:
-  - id: zaim-amazon-import-001
-    title: 公開中の README と docs にある実データ由来の値（商品名・金額・カード下4桁）を消すか決める
+  - id: zaim-amazon-import-002
+    title: 公開中のアプリ画面・コード・docs にある家族2人の名前（内訳名・支払元名）を消すか決める
     status: ready
     priority: middle
-    due: 2026-10-31
+    due: 2026-11-30
     due_kind: soft
     owner: 自分
     blocked_by: null
     blocked_reason: null
     waiting_for: null
-    done_when: 残すか消すかを決めた。消す場合は該当箇所を集計値かダミーに置き換えてコミットした
-    ref: docs/PUBLIC_DATA_REVIEW.md（判断材料と推奨。次はここの説明から入る） / CLAUDE.md の公開リポジトリとしてのセキュリティ留意事項
+    done_when: 残すか消すかを決めた。消す場合は内訳名・支払元名の表示を変えて iPhone 実機で確認し、コミットした
+    ref: docs/PUBLIC_DATA_REVIEW.md §5（001 で持ち越した④。機能変更になるので 001 と分けた）
 # 1件の書き方（載せるときはこの形。★は必須）:
 #   - id: zaim-amazon-import-001   # ★ <project>-NNN。採番はこのプロジェクトが持つ
 #     title: タスクの内容を1行で      # ★
@@ -59,7 +60,8 @@ open_tasks:
 #     ref: null                    # 任意。経緯がある資料へのポインタ
 
 # 直近7日ぶんだけ。「open_tasks から消えた＝完了」を manager に確実に伝えるため。
-recently_closed: []
+recently_closed:
+  - { id: zaim-amazon-import-001, title: 公開中の README と docs にある実データ由来の値を消すか決める（現行版から消した）, closed_at: 2026-10-29 }
 # 例:
 # recently_closed:
 #   - { id: zaim-amazon-import-000, title: 片付いた作業, closed_at: 2026-09-06 }
@@ -77,17 +79,17 @@ recently_closed: []
 
 ### `open_tasks` に載せているもの・載せていないもの
 
-**載せている**: `zaim-amazon-import-001`（公開済みの値を消すかの判断）。期限もなくブロッカーでもないが、
-User の判断待ちで、会話に書いただけでは manager に届かないため、2026-09-15 に User の依頼で載せた。
-消しても git の履歴には残る点も判断材料にする。
-2026-10-15 に棚卸しを済ませ、User は判断を期日（10/31）まで持ち越した。**次に入るときは `docs/PUBLIC_DATA_REVIEW.md` で説明してから判断をもらう。**
+**載せている**: `zaim-amazon-import-002`（公開中の家族2人の名前を消すかの判断）。
+`001`（注文ID・商品名・カード下4桁）は 2026-10-29 に User が「現行版から消す」と決め、同日に置き換えて閉じた。
+名前は内訳名・支払元名の表示を変える機能変更になるため、001 から切り出した。期日は仮置き（soft）。
+**次に入るときは `docs/PUBLIC_DATA_REVIEW.md` §5 で説明してから判断をもらう。**
 
 **載せていない**: 台帳に残っている次の未完事項。いずれも期限なし・他を止めていないため
 `TASKS.md` には載せず、元の台帳に置いたままにしている。
 
 | 未完の事項 | 台帳 |
 |---|---|
-| Zaim 側の記録漏れ1件（2,569円）の取込（2026-09-06 の突合時点。取り込んだかの記録なし） | `docs/IMPLEMENTATION.md` §9-5 |
+| Zaim 側の記録漏れ1件の取込（2026-09-06 の突合時点。取り込んだかの記録なし） | `docs/IMPLEMENTATION.md` §9-5 |
 | ともEPOS の Amazon 購入は別アカウント。取り込むならそのアカウントでデータのリクエストが要る | `docs/IMPLEMENTATION.md` §9-7 |
 | 将来拡張（PWA 化・共有メニューから ZIP を受け取る。カード選択の記憶は 2026-10-14 に実装済み）。任意 | `docs/IMPLEMENTATION.md` §4 Phase 4 |
 | Zaim 公式 API での直接登録の調査。スコープ外（やるなら別 PLAN） | `docs/PLAN_ITEM_MEMO_SELECTION.md` §4-1 |

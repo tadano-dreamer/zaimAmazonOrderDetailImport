@@ -8,19 +8,19 @@ Zaim インポート用 CSV
 
 ■ 実態(カード明細/Zaim連携)に合わせた集計ルール
   1. 出荷単位で合算 : 同じ注文で同じ日に発送された明細を 1 エントリにまとめ、金額を合計する。
-                      (例: サンナップ紙コップ 477 + シルコット 1,180 = 1,657)
+                      (例: 紙コップ 477 + ウェットシート 1,180 = 1,657)
                       (例: 今治タオル 2,370 × 2個 = 4,740)
   2. 発送日で計上   : 日付は Order Date ではなく Ship Date(発送日)を使う。
                       カードは発送時に請求されるため、6/29 注文→6/30 発送は 6/30 計上。
   3. 返金を差引     : Refund Details.csv の返金額を該当注文から差し引く。
-                      (例: レノア 1,811 − 発送遅延返金 200 = 実質 1,611)
+                      (例: 柔軟剤 1,811 − 発送遅延返金 200 = 実質 1,611)
 
 使い方 (PowerShell / bash 共通):
-    python amazon_to_zaim.py                       # 既定 (カード5171)
-    python amazon_to_zaim.py --card 1745           # 別のカード下4桁で抽出
-    python amazon_to_zaim.py --card 5171,7474      # カード更新で下4桁が変わった場合は両方指定
+    python amazon_to_zaim.py --card 4242           # カード下4桁は必須(手元の履歴にある番号を指定)
+    python amazon_to_zaim.py --card 9013           # 別のカード下4桁で抽出
+    python amazon_to_zaim.py --card 4242,8787      # カード更新で下4桁が変わった場合は両方指定
     python amazon_to_zaim.py --month 2026-07       # その月だけ出力(月次取込用)
-    python amazon_to_zaim.py --zip "Your Orders.zip"  # ZIP から解凍してから処理
+    python amazon_to_zaim.py --card 4242 --zip "Your Orders.zip"  # ZIP から解凍してから処理
     python amazon_to_zaim.py --no-aggregate        # 合算せず明細1行=1エントリ(旧挙動)
     python amazon_to_zaim.py --split-items         # 同じ支払いでも商品ごとに1行
     python amazon_to_zaim.py --memo notes          # メモを注記と注文IDだけにする(既定は商品名の箇条書き)
@@ -42,7 +42,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # --- 既定値 ---------------------------------------------------------------
-DEFAULT_CARD = "5171"                       # 抽出するカード下4桁
 DEFAULT_CATEGORY = "生活費"                  # Zaim カテゴリ (固定)
 # Zaim カテゴリの内訳と、それに対応する支払元。自由入力だと打ち間違いがそのまま
 # 新しい内訳・口座として Zaim 側に増えるため、選択肢に閉じる (増やすときはここを直す)。
@@ -472,7 +471,7 @@ def main() -> None:
                     help="作業フォルダ (既定: リポジトリの data/ ・Your Orders/ が置かれた場所)")
     ap.add_argument("--zip", dest="zip_name", default=None,
                     help="解凍する ZIP ファイル名 (未指定なら解凍済み前提)")
-    ap.add_argument("--card", default=DEFAULT_CARD,
+    ap.add_argument("--card", required=True,
                     help="抽出するカード下4桁。カンマ区切りで複数指定可 "
                          "(カード更新で下4桁が変わった場合は旧番号と新番号の両方を指定する)")
     ap.add_argument("--from", dest="date_from", default="",
